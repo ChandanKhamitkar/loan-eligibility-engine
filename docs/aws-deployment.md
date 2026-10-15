@@ -38,6 +38,8 @@ The script deploys the stack, uploads the n8n bundle (compose file, workflows, g
 
 `python scripts/aws_teardown.py` empties the bucket and removes the stack (RDS, EC2, VPC, Lambdas). Do this as soon as the demo is recorded.
 
+The delete can fail at `InternetGatewayAttachment` (`NotStabilized`) because Lambda network interfaces take up to ~30 minutes to release. The script prints whether the RDS instance and EC2 host are gone (those are the only resources that cost money) and retries after a wait. If it still fails, delete the stack in the console and retain the failed resources; what remains is free.
+
 ## Cost and limits
 
 - The free plan gives credits and cannot bill you unless you upgrade to a paid plan. Do not upgrade.
