@@ -142,6 +142,7 @@ db/migrations/          Plain SQL schema migrations
 db/queries/             Reference copies of the SQL used inside n8n
 scripts/                n8n setup, AWS deploy/teardown, migrations, seeds
 tests/                  Unit tests for parsing and validation
+docs/                   codebase-tour.md (guided reading order), aws-deployment.md
 planning/               Requirements, decisions, schema, architecture
 ```
 
