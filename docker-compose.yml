@@ -88,6 +88,7 @@ services:
       NOTIFY_RECIPIENTS: ${NOTIFY_RECIPIENTS}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+      GEMINI_FALLBACK_MODEL: ${GEMINI_FALLBACK_MODEL:-gemini-3.5-flash-lite}
       NODE_FUNCTION_ALLOW_BUILTIN: crypto
     ports:
       - "5678:5678"

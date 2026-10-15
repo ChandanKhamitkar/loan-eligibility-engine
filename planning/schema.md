@@ -47,6 +47,7 @@ Site list (config) and the latest snapshot in one table.
 | cleaned_text | text | latest snapshot only |
 | last_fetched_at / last_changed_at | timestamptz | |
 | last_status | text | `ok`, `fetch_failed`, `extract_failed` |
+| last_error | text | reason for the last failure (e.g. the Gemini error); null after a success |
 
 ### loan_products
 

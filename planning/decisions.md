@@ -85,7 +85,7 @@ Sources (rows in `crawl_sources`, seeded by migration 0003; list-driven, so addi
    - If eligibility differs by employment type, return one product per segment (ICICI: Salaried 18-58 / ₹30k, Self-Employed 23-65).
 5. `Validate products` Code node enforces ranges and enums (rate 0.5-60, score 300-900, age 18-100, employment ∈ {Salaried, Self-Employed, Business}), dedupes names; empty result → `extract_failed`.
 6. One SQL statement upserts `loan_products` on (lender, product_name) and saves the hash + cleaned text, so the hash is stored **only if** the products were. New or criteria-changed products set `needs_rematch`.
-7. Parallel branch: crawled products unseen for 7 days → `active=false` (never deleted). A failed crawl never wipes products. Gemini 5xx/429 are retried (4 tries, 5s apart).
+7. Parallel branch: crawled products unseen for 7 days → `active=false` (never deleted). A failed crawl never wipes products. Gemini 5xx/429 are retried (3 tries, 5s apart); if the main model still fails the same request goes to `GEMINI_FALLBACK_MODEL` (default `gemini-3.5-flash-lite`, which extracted all three pages correctly while the big Flash models returned 503). The reason for any failed crawl is stored in `crawl_sources.last_error`.
 
 Columns: see [schema.md](schema.md). Seed products (`db/seed/products.json`, lenders named "Demo ...", `source_id` null) are only for testing matching without the crawler.
 

@@ -1,6 +1,9 @@
 """Deploy the AWS stack, ship the n8n bundle to its EC2 host, and run DB migrations.
 
-Usage: python scripts/aws_deploy.py   (reads .env.aws; see .env.aws.example)
+Usage: python scripts/aws_deploy.py [--update-n8n]   (reads .env.aws; see .env.aws.example)
+
+--update-n8n re-applies the bundle on an already running n8n host (new workflows or settings);
+without it the host only reads the bundle on its first boot.
 
 Order matters: the stack creates the EC2 host, which waits for a bundle in S3. This script
 uploads that bundle once the stack exists (it needs the database host name), then migrates.
@@ -8,6 +11,7 @@ uploads that bundle once the stack exists (it needs the database host name), the
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import os
@@ -19,6 +23,7 @@ import urllib.request
 from pathlib import Path
 
 import boto3
+from botocore.exceptions import WaiterError
 
 ROOT = Path(__file__).resolve().parent.parent
 ENV_FILE = ROOT / ".env.aws"
@@ -77,6 +82,7 @@ def n8n_host_env(env: dict[str, str], outputs: dict[str, str]) -> str:
         "N8N_ENCRYPTION_KEY": env["N8N_ENCRYPTION_KEY"],
         "GEMINI_API_KEY": env["GEMINI_API_KEY"],
         "GEMINI_MODEL": env.get("GEMINI_MODEL", "gemini-3.8-flash"),
+        "GEMINI_FALLBACK_MODEL": env.get("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite"),
         "NOTIFY_LIMIT": env.get("NOTIFY_LIMIT", "2"),
         "NOTIFY_RECIPIENTS": env["NOTIFY_RECIPIENTS"],
     }
@@ -99,10 +105,59 @@ def _skip_caches(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
     return None if "__pycache__" in info.name else info
 
 
+def refresh_n8n_host(session: boto3.Session, bucket: str, region: str) -> None:
+    """Pull the latest bundle onto the running host through SSM and re-import the workflows."""
+    cloudformation = session.client("cloudformation")
+    detail = cloudformation.describe_stack_resource(
+        StackName=STACK, LogicalResourceId="N8nInstance"
+    )
+    instance_id = detail["StackResourceDetail"]["PhysicalResourceId"]
+    commands = [
+        "set -e",
+        "export HOME=/root",
+        f"export AWS_DEFAULT_REGION={region}",
+        "cd /opt/app",
+        f"aws s3 cp s3://{bucket}/{BUNDLE_KEY} /tmp/bundle.tgz",
+        "tar -xzf /tmp/bundle.tgz -C /opt/app",
+        "TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token"
+        " -H 'X-aws-ec2-metadata-token-ttl-seconds: 300')",
+        'IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN"'
+        " http://169.254.169.254/latest/meta-data/public-ipv4)",
+        'echo "N8N_PUBLIC_URL=http://$IP:5678" >> .env',
+        "docker compose up -d",
+        "until curl -sf http://localhost:5678/healthz; do sleep 5; done",
+        "python3 scripts/n8n_setup.py",
+    ]
+    ssm = session.client("ssm")
+    sent = ssm.send_command(
+        InstanceIds=[instance_id],
+        DocumentName="AWS-RunShellScript",
+        Parameters={"commands": commands},
+        TimeoutSeconds=900,
+    )
+    command_id = sent["Command"]["CommandId"]
+    print(f"refreshing n8n host {instance_id} (command {command_id})...")
+    # A failed command raises here; the invocation status below says what went wrong
+    with contextlib.suppress(WaiterError):
+        ssm.get_waiter("command_executed").wait(
+            CommandId=command_id,
+            InstanceId=instance_id,
+            WaiterConfig={"Delay": 10, "MaxAttempts": 90},
+        )
+    result = ssm.get_command_invocation(CommandId=command_id, InstanceId=instance_id)
+    print(f"  status: {result['Status']}")
+    if result["Status"] != "Success":
+        print(result.get("StandardErrorContent", "")[-1500:])
+        sys.exit("n8n host refresh failed")
+
+
 def main() -> None:
     env = load_env()
-    env["DEPLOY_REGION"] = env.get("DEPLOY_REGION", "ap-south-1")
+    env["DEPLOY_REGION"] = env.get("DEPLOY_REGION", "ap-southeast-2")
     region = env["DEPLOY_REGION"]
+    # Serverless loads .env.aws itself; boto3 needs the same AWS_* credentials in this process
+    for key, value in env.items():
+        os.environ.setdefault(key, value)
 
     run_serverless("deploy", "--stage", STAGE, "--region", region, env=env)
 
@@ -122,6 +177,9 @@ def main() -> None:
     if response.get("FunctionError"):
         sys.exit(f"migration failed: {result}")
     print(f"migrations applied: {result['applied'] or 'none (already up to date)'}")
+
+    if "--update-n8n" in sys.argv:
+        refresh_n8n_host(session, outputs["UploadBucketName"], region)
 
     print("\nDeployed.")
     print(f"  App:  {outputs.get('HttpApiUrl')}")

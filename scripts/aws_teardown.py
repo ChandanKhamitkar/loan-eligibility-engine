@@ -30,7 +30,7 @@ def load_env() -> dict[str, str]:
 
 def main() -> None:
     env = load_env()
-    region = env.get("DEPLOY_REGION", "ap-south-1")
+    region = env.get("DEPLOY_REGION", "ap-southeast-2")
     os.environ.update(env)
     session = boto3.Session(region_name=region)
 

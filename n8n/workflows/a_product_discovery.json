@@ -234,7 +234,40 @@
         160
       ],
       "retryOnFail": true,
-      "maxTries": 4,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/{{ $env.GEMINI_FALLBACK_MODEL }}:generateContent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-goog-api-key",
+              "value": "={{ $env.GEMINI_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $('Build Gemini request').item.json.request }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "a-gemini-fb",
+      "name": "Extract products (fallback model)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1440,
+        360
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
       "waitBetweenTries": 5000,
       "onError": "continueErrorOutput"
     },
@@ -287,7 +320,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "-- Upsert extracted products and store the page snapshot in one transaction,\n-- so the hash is only saved when the products were.\nWITH src AS (\n    SELECT source_id, lender, url FROM crawl_sources WHERE source_id = $1\n),\nincoming AS (\n    SELECT * FROM jsonb_to_recordset($2::jsonb) AS x(\n        product_name text, rate_min numeric, rate_max numeric, min_income numeric,\n        min_credit_score smallint, min_age smallint, max_age smallint,\n        allowed_employment text[], residual_criteria text)\n),\nupserted AS (\n    INSERT INTO loan_products (source_id, lender, product_name, rate_min, rate_max, min_income,\n                               min_credit_score, min_age, max_age, allowed_employment,\n                               residual_criteria, source_url)\n    SELECT s.source_id, s.lender, i.product_name, i.rate_min, i.rate_max, i.min_income,\n           i.min_credit_score, i.min_age, i.max_age, i.allowed_employment,\n           i.residual_criteria, s.url\n    FROM incoming i CROSS JOIN src s\n    ON CONFLICT (lender, product_name) DO UPDATE SET\n        source_id = EXCLUDED.source_id,\n        rate_min = EXCLUDED.rate_min,\n        rate_max = EXCLUDED.rate_max,\n        min_income = EXCLUDED.min_income,\n        min_credit_score = EXCLUDED.min_credit_score,\n        min_age = EXCLUDED.min_age,\n        max_age = EXCLUDED.max_age,\n        allowed_employment = EXCLUDED.allowed_employment,\n        residual_criteria = EXCLUDED.residual_criteria,\n        source_url = EXCLUDED.source_url,\n        active = true,\n        last_seen_at = now(),\n        needs_rematch = loan_products.needs_rematch OR (\n            (loan_products.min_income, loan_products.min_credit_score, loan_products.min_age,\n             loan_products.max_age, loan_products.allowed_employment, loan_products.active)\n            IS DISTINCT FROM\n            (EXCLUDED.min_income, EXCLUDED.min_credit_score, EXCLUDED.min_age,\n             EXCLUDED.max_age, EXCLUDED.allowed_employment, true)),\n        updated_at = now()\n    RETURNING 1\n)\nUPDATE crawl_sources\nSET content_hash = $3, cleaned_text = $4, last_fetched_at = now(), last_changed_at = now(), last_status = 'ok'\nWHERE source_id = $1\nRETURNING source_id, (SELECT count(*) FROM upserted) AS products_saved;",
+        "query": "-- Upsert extracted products and store the page snapshot in one transaction,\n-- so the hash is only saved when the products were.\nWITH src AS (\n    SELECT source_id, lender, url FROM crawl_sources WHERE source_id = $1\n),\nincoming AS (\n    SELECT * FROM jsonb_to_recordset($2::jsonb) AS x(\n        product_name text, rate_min numeric, rate_max numeric, min_income numeric,\n        min_credit_score smallint, min_age smallint, max_age smallint,\n        allowed_employment text[], residual_criteria text)\n),\nupserted AS (\n    INSERT INTO loan_products (source_id, lender, product_name, rate_min, rate_max, min_income,\n                               min_credit_score, min_age, max_age, allowed_employment,\n                               residual_criteria, source_url)\n    SELECT s.source_id, s.lender, i.product_name, i.rate_min, i.rate_max, i.min_income,\n           i.min_credit_score, i.min_age, i.max_age, i.allowed_employment,\n           i.residual_criteria, s.url\n    FROM incoming i CROSS JOIN src s\n    ON CONFLICT (lender, product_name) DO UPDATE SET\n        source_id = EXCLUDED.source_id,\n        rate_min = EXCLUDED.rate_min,\n        rate_max = EXCLUDED.rate_max,\n        min_income = EXCLUDED.min_income,\n        min_credit_score = EXCLUDED.min_credit_score,\n        min_age = EXCLUDED.min_age,\n        max_age = EXCLUDED.max_age,\n        allowed_employment = EXCLUDED.allowed_employment,\n        residual_criteria = EXCLUDED.residual_criteria,\n        source_url = EXCLUDED.source_url,\n        active = true,\n        last_seen_at = now(),\n        needs_rematch = loan_products.needs_rematch OR (\n            (loan_products.min_income, loan_products.min_credit_score, loan_products.min_age,\n             loan_products.max_age, loan_products.allowed_employment, loan_products.active)\n            IS DISTINCT FROM\n            (EXCLUDED.min_income, EXCLUDED.min_credit_score, EXCLUDED.min_age,\n             EXCLUDED.max_age, EXCLUDED.allowed_employment, true)),\n        updated_at = now()\n    RETURNING 1\n)\nUPDATE crawl_sources\nSET content_hash = $3, cleaned_text = $4, last_fetched_at = now(), last_changed_at = now(), last_status = 'ok', last_error = NULL\nWHERE source_id = $1\nRETURNING source_id, (SELECT count(*) FROM upserted) AS products_saved;",
         "options": {
           "queryReplacement": "={{ [$json.source_id, JSON.stringify($json.products), $json.content_hash, $json.cleaned_text] }}"
         }
@@ -310,7 +343,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE crawl_sources SET last_fetched_at = now(), last_status = 'ok' WHERE source_id = $1 RETURNING source_id;",
+        "query": "UPDATE crawl_sources SET last_fetched_at = now(), last_status = 'ok', last_error = NULL WHERE source_id = $1 RETURNING source_id;",
         "options": {
           "queryReplacement": "={{ [$json.source_id] }}"
         }
@@ -333,9 +366,9 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE crawl_sources SET last_fetched_at = now(), last_status = 'fetch_failed' WHERE source_id = $1 RETURNING source_id;",
+        "query": "UPDATE crawl_sources SET last_fetched_at = now(), last_status = 'fetch_failed', last_error = $2 WHERE source_id = $1 RETURNING source_id;",
         "options": {
-          "queryReplacement": "={{ [$('Load enabled sources').item.json.source_id] }}"
+          "queryReplacement": "={{ [$('Load enabled sources').item.json.source_id, String($json.error?.message ?? $json.error ?? 'Page was blocked or too short to read').slice(0, 300)] }}"
         }
       },
       "id": "a-fail-fetch",
@@ -356,9 +389,9 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE crawl_sources SET last_fetched_at = now(), last_status = 'extract_failed' WHERE source_id = $1 RETURNING source_id;",
+        "query": "UPDATE crawl_sources SET last_fetched_at = now(), last_status = 'extract_failed', last_error = $2 WHERE source_id = $1 RETURNING source_id;",
         "options": {
-          "queryReplacement": "={{ [$('Build Gemini request').item.json.source_id] }}"
+          "queryReplacement": "={{ [$('Build Gemini request').item.json.source_id, String($json.error?.message ?? $json.error ?? 'Gemini returned no valid products').slice(0, 300)] }}"
         }
       },
       "id": "a-fail-extract",
@@ -509,6 +542,24 @@
       ]
     },
     "Extract products (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Validate products",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract products (fallback model)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract products (fallback model)": {
       "main": [
         [
           {

@@ -17,7 +17,7 @@ Lambda, RDS and the n8n host share one VPC. RDS has no public access and accepts
 
 - An AWS account and an IAM user with access keys that can create the stack (for a short-lived demo, `AdministratorAccess`).
 - Node.js 18+ (`npm install` once), Docker (packages the Linux build of `psycopg`), and the Python venv from the main README.
-- **SES, in the region you deploy to** (default `ap-south-1`): verify the sender address and every address in `NOTIFY_RECIPIENTS`. New accounts are in the SES sandbox, which only sends to verified addresses. Create a separate IAM user with only `ses:SendEmail`, and keep its keys for step 1.
+- **SES, in the region you deploy to** (default `ap-southeast-2`): verify the sender address and every address in `NOTIFY_RECIPIENTS`. New accounts are in the SES sandbox, which only sends to verified addresses. Create a separate IAM user with only `ses:SendEmail`, and keep its keys for step 1.
 
 ## Deploy
 
@@ -29,6 +29,10 @@ The script deploys the stack, uploads the n8n bundle (compose file, workflows, g
 
 4. The EC2 host installs Docker, pulls the bundle, starts n8n and imports the credentials and workflows by itself. Open the printed n8n URL once it answers, create the n8n owner account, and check that workflows A, B and C show as published.
 5. Open the printed app URL, upload `data/demo_users.csv` (or `users.csv`), and watch the status steps. Run workflow A once from the n8n editor first so products exist.
+
+## Updating a running deployment
+
+`python scripts/aws_deploy.py --update-n8n` redeploys, runs new migrations, and re-applies the latest workflows and settings on the existing n8n host (through SSM Run Command). Without the flag the host only reads its bundle on first boot.
 
 ## Tear down
 

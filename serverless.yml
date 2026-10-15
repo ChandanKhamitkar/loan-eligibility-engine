@@ -29,7 +29,7 @@ provider:
   name: aws
   runtime: python3.12
   stage: ${opt:stage, 'aws'}
-  region: ${opt:region, 'ap-south-1'}
+  region: ${opt:region, 'ap-southeast-2'}
   memorySize: 512
   timeout: 25
   logRetentionInDays: 7
