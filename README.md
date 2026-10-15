@@ -1,109 +1,30 @@
 # Loan Eligibility Engine
 
-Upload a CSV of users, discover personal loan products from lender websites, match every user to the products they qualify for, and email them. Ingestion runs on Lambda and S3, data lives in PostgreSQL, and **all business logic runs in self-hosted n8n workflows**.
+Upload a CSV of users. The system crawls loan products from lender websites, matches each user to the products they qualify for, and emails them.
 
-Runs two ways from the same code: fully local with Docker Compose, or on AWS with one command.
+Ingestion runs on Lambda and S3, data lives in PostgreSQL, and all business logic runs in self-hosted n8n workflows.
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    UI["Browser UI"] -->|"1 request upload"| API["API Gateway"]
-    API --> L1["Lambda: get_upload_url"]
-    L1 -->|"presigned POST"| UI
-    UI -->|"2 upload CSV directly"| S3[("S3 bucket")]
-    S3 -->|"3 ObjectCreated event"| L2["Lambda: process_csv"]
-    L2 -->|"4 validate, chunked upsert"| DB[("RDS PostgreSQL")]
-    L2 -->|"5 webhook + secret"| B
+![Architecture](docs/architecture.png)
 
-    subgraph N8N["n8n on EC2, Docker"]
-        A["A: Product discovery<br/>daily 02:00"]
-        B["B: User matching<br/>webhook"]
-        C["C: Notification"]
-        B -->|"6 on completion"| C
-    end
+1. The browser requests an upload link from API Gateway (Lambda `get_upload_url`).
+2. The browser uploads the CSV **directly to S3** (presigned POST).
+3. The S3 event starts Lambda `process_csv`.
+4. It validates rows and upserts users into RDS.
+5. It calls n8n **workflow B** (webhook, secret header).
+6. B matches users to products and calls **workflow C**.
+7. C emails matched users through SES.
 
-    A -->|"crawl 3 lender pages"| WEB["Lender websites"]
-    A -->|"extract JSON"| LLM["Gemini"]
-    A -->|"upsert products"| DB
-    B <-->|"funnel SQL"| DB
-    C -->|"7 email"| SES["SES or Gmail SMTP"]
-    C <--> DB
-```
+**Workflow A** runs separately every day: it crawls lender pages, extracts products with Gemini and stores them.
 
-Locally, MinIO replaces S3, a small Flask app replaces API Gateway and the S3 event, and Postgres runs in a container. The Lambda handlers, workflows and SQL are identical in both. Details: [planning/architecture.md](planning/architecture.md).
+Deployed with the Serverless Framework. RDS is private; Lambda, RDS and n8n (Docker on EC2) share one VPC. Locally the same code runs on Docker Compose: MinIO replaces S3 and a small Flask app replaces API Gateway.
 
-### The pipeline
+## Setup and deployment
 
-| Step | What happens |
-|---|---|
-| Ingestion | The browser gets a presigned POST URL and uploads the CSV **straight to S3**, so API Gateway and Lambda payload and timeout limits never apply. The S3 event starts a Lambda that streams the file, validates each row, and upserts users in chunks of 2,000. Latest row wins; a user is flagged for re-matching only if income, score, employment or age actually changed. Bad rows are rejected and counted, not fatal. |
-| **A** Product discovery | Daily (and on demand). For each source: fetch, strip markup (about 95% smaller), hash the cleaned text. Unchanged pages stop here. Changed pages go to Gemini with a strict JSON schema, the output is validated, and products are upserted together with the new hash in one statement. |
-| **B** Matching | Called by webhook after a CSV is processed (secret header required). Replies 202 immediately, then runs the funnel as one SQL statement and stores matches. |
-| **C** Notification | Called by B. Emails each selected user their best 5 products and marks them notified only after a successful send. |
+### Local (Docker Compose)
 
-## The Optimization Treasure Hunt
-
-**Idea: the LLM reads each product page once, not each user-product pair.** An LLM turns messy page text into structured columns. After that, "who is eligible for what" is deterministic, which is faster, free, reproducible and explainable, and that matters in lending.
-
-| Stage | Where | What it does |
-|---|---|---|
-| 0. Incremental scope | SQL | Only flagged users and flagged products are evaluated: (flagged users × all products) ∪ (all users × flagged products) |
-| 1. Hard rules | One set-based SQL join | income, credit score, age range, employment type; a null criterion means no constraint |
-| 2. Rank and cap | `fit_score` (lower rate is better); top 5 applied when emailing | Keeps emails useful |
-| LLM | Only at crawl time | One call per *changed* page. A hash of the cleaned page skips unchanged pages, and a second model takes over when the first is overloaded |
-
-Real numbers from this repository's database (`match_runs` table):
-
-| Run | Naive pairs | Pairs evaluated | Eligible | Skipped |
-|---|---|---|---|---|
-| First upload: 10,000 users, 8 products | 80,000 | 80,000 | 25,682 | 0% (everything is new) |
-| Workflow B run with nothing flagged | 80,000 | 0 | 0 | 100% |
-| One product's criteria changed | 80,000 | 10,000 | 929 | 87.5% |
-| Crawler added 4 real products | 120,000 | 40,000 | 8,179 | 66.7% |
-
-Re-uploading an unchanged file produces the "nothing flagged" case above: re-ingesting the identical 10,000-row file flags 0 users, one changed income flags exactly 1, and a name-only change flags 0.
-
-An LLM-per-pair design would need 120,000 calls for the same data. Here: **3 calls per changed crawl, 0 per user, 0 per pair**, and the funnel SQL runs in about a second (average workflow B execution: 1.1 s).
-
-Honest limit: pages also carry criteria that are not numeric ("2 years of work experience"). These are stored as `residual_criteria`, but the CSV has no matching user fields, so nothing can be judged against them and they are not used for matching.
-
-## Web crawling strategy
-
-| Aspect | Choice |
-|---|---|
-| Sources | Three public personal-loan pages (Tata Capital, IDFC FIRST Bank, ICICI Bank), stored as rows in `crawl_sources`. Adding a site is one `INSERT`, with no workflow change. |
-| Fetching | Plain HTTP GET with a browser User-Agent, 30 s timeout, 3 tries, once per source per day. All three pages serve their rates and eligibility in the HTML, so no JavaScript rendering is needed. |
-| Cleaning | Remove scripts, styles, navigation, footers, SVG, iframes and embedded JSON; keep table cells as text; drop duplicate lines; cap at 80,000 characters. About 95% smaller than the raw page, which keeps the LLM call cheap. |
-| Change detection | SHA-256 of the **cleaned** text. Unchanged pages stop here, with no LLM call. |
-| Extraction | An LLM with a strict JSON schema, not CSS selectors, because it survives layout changes and normalises criteria (lakhs to rupees, monthly to annual rates, "21 to 60 years" to two numbers) in one step. Unknown values are `null`, never guessed. If eligibility differs by employment type, the page yields one product per segment. |
-| Safety | Output is validated (ranges, allowed values) before it is saved; failures are recorded with their reason; a failed or empty crawl never removes existing products; crawled products not seen for 7 days are deactivated, not deleted. |
-
-Limits: `robots.txt` is not consulted (the pages are public marketing pages fetched once a day), and a site that blocks the request is recorded as `fetch_failed` rather than worked around.
-
-## Design decisions
-
-| Decision | Why |
-|---|---|
-| Presigned POST + S3 event | Meets the "no API Gateway upload" requirement, with a server-enforced size limit and retries from the event |
-| Business logic in n8n; heavy parsing in Lambda | n8n for orchestration and decisions; Lambda where volume and limits matter |
-| Claim-and-match in one SQL statement | Flags are cleared and matches written in one transaction, so a crash cannot lose a flagged user; reruns are idempotent (`PRIMARY KEY (user_id, product_id)`) |
-| `needs_match` / `needs_rematch` flags | Incremental work; changed products re-evaluate only themselves |
-| Hash the **cleaned** text | Raw HTML changes daily from tracking tokens; cleaned text does not |
-| Hash saved only after products are saved | A failed extraction retries on the next run instead of being skipped |
-| Required-but-nullable schema fields | Without this the model silently dropped values it was unsure about |
-| Validation after the LLM | Ranges and enums are enforced before anything reaches the database |
-| Fallback model | Gemini returned 503 "high demand" during development; the same request now goes to a second model |
-| One product per employment segment | ICICI's rules differ for salaried and self-employed applicants; blending them would be wrong |
-| Matching starts only after a CSV is processed | As the brief specifies; products found later are matched on the next upload |
-| Demo email guard | Recipients come only from `NOTIFY_RECIPIENTS`, never from the CSV, and each run is capped at `NOTIFY_LIMIT` (2) |
-| No NAT gateway on AWS | Lambda, RDS and n8n share one VPC; S3 is reached through a free gateway endpoint (saves about $32/month) |
-
-Not built on purpose: authentication, user accounts, OAuth, multi-region, queues for scale beyond a small user base.
-
-## Run locally
-
-Prerequisites: Docker, Python 3.12, and a Gemini API key.
+Needs Docker, Python 3 and a Gemini API key.
 
 ```bash
 cp .env.example .env            # fill in passwords, GEMINI_API_KEY, GMAIL_APP_PASSWORD, NOTIFY_RECIPIENTS
@@ -111,52 +32,99 @@ docker compose up -d --build    # Postgres, MinIO, API, n8n; migrations run auto
 ```
 
 1. Open http://localhost:5678 and create the n8n owner account.
-2. `python scripts/n8n_setup.py` imports the credentials and the three workflows from this repo and publishes them (standard library only; it drives `docker compose exec`).
+2. `python scripts/n8n_setup.py` creates the credentials and imports and publishes the three workflows.
 3. In n8n, open **A - Loan Product Discovery** and click **Execute workflow**.
-4. Open http://localhost:8000 and upload `data/demo_users.csv` (or `data/users.csv`).
-5. Watch the status steps. Workflow C emails up to 2 users, to your `NOTIFY_RECIPIENTS`.
+4. Open http://localhost:8000 and upload `data/users.csv` (10,000 rows) or `data/demo_users.csv`.
 
-`data/demo_users.csv` is 20 users plus three edge cases: a repeated user with a new income (latest wins), an invalid user ID, and an out-of-range score.
+### AWS
 
-### Credentials in n8n
-
-`scripts/n8n_setup.py` creates these from `.env`, encrypted with `N8N_ENCRYPTION_KEY`. To create them by hand instead, use **Credentials → Add credential**:
-
-| Name (ID) | Type | Values |
-|---|---|---|
-| App Postgres (`app-postgres`) | Postgres | host `postgres`, port 5432, database and user from `.env` |
-| Gmail SMTP (`gmail-smtp`) | SMTP | `smtp.gmail.com`, 465, SSL, your Gmail address and an app password |
-| AWS SES (`aws-ses`) | AWS | region, access key, secret (AWS deployment only) |
-
-The webhook secret, Gemini key and demo limits are environment variables of the n8n container and are read in nodes as `$env.*`; no secrets are stored in the workflow JSON files.
-
-## Deploy to AWS
+Needs an AWS account with access keys, Node.js, Docker, and the sender and recipient addresses verified in SES.
 
 ```bash
 cp .env.aws.example .env.aws    # fill in
 npm install
-python scripts/aws_deploy.py
-python scripts/aws_teardown.py  # delete everything when done
+python scripts/aws_deploy.py    # stack, n8n host, migrations
+python scripts/aws_teardown.py  # delete everything
 ```
 
-Full steps, costs and troubleshooting: [docs/aws-deployment.md](docs/aws-deployment.md).
+Steps, costs and troubleshooting: [docs/aws-deployment.md](docs/aws-deployment.md).
 
-Notes from a real deployment: SES starts in the sandbox, which only sends to verified addresses. Mail sent *from a Gmail address through SES* is accepted but filed under Spam by Gmail, so use your own domain for real use.
+### n8n credentials
+
+The setup script creates these from `.env` / `.env.aws`. To create them by hand: **Credentials → Add credential**.
+
+| Name | Type | Values |
+|---|---|---|
+| App Postgres | Postgres | host `postgres` (local) or the RDS endpoint, port 5432, database and user from the env file; SSL `require` on AWS |
+| Gmail SMTP | SMTP | `smtp.gmail.com`, 465, SSL, Gmail address and app password (local) |
+| AWS SES | AWS | region, access key ID, secret access key (AWS) |
+
+Webhook secret, Gemini key and demo limits are container environment variables, read in nodes as `$env.*`. No secrets are stored in the workflow JSON.
+
+## Design decisions
+
+### Workflows
+
+| | Trigger | Logic |
+|---|---|---|
+| **A** Product discovery | Daily 02:00, or manual | For each source: fetch, clean, hash. Unchanged: stop. Changed: Gemini extracts products, output is validated, and products and hash are saved in one statement. |
+| **B** User matching | Webhook after a CSV is processed | Checks the secret, replies 202, then one SQL statement claims flagged users and products, applies the eligibility rules and stores matches. |
+| **C** Notification | Called by B | Picks users with unsent matches, builds one email each (best 5 products), sends, and marks them notified only after a successful send. |
+
+### Web crawling strategy
+
+- **Sources:** Tata Capital, IDFC FIRST Bank and ICICI Bank personal-loan pages, stored in `crawl_sources`. Adding a site is one `INSERT`.
+- **Fetch:** plain HTTP GET, once a day. All three pages include rates and eligibility in the HTML.
+- **Clean:** strip scripts, styles, navigation, footers and embedded JSON; keep tables as text. About 95% smaller.
+- **Change detection:** SHA-256 of the cleaned text. Unchanged pages cost no LLM call.
+- **Extract:** an LLM with a strict JSON schema instead of CSS selectors, so layout changes do not break it. Unknown values are `null`. Different rules per employment type become separate products.
+- **Safety:** output is validated before saving; failures are recorded with their reason; a failed crawl never removes products; a Gemini outage falls back to a second model.
+- **Limits:** `robots.txt` is not consulted; a blocked site is recorded as `fetch_failed`.
+
+### Optimization Treasure Hunt
+
+**The LLM reads each product page once, not each user-product pair.** After that, matching is deterministic SQL: fast, free and explainable.
+
+| Stage | What it does |
+|---|---|
+| 0. Incremental scope | Only flagged users and flagged products are evaluated |
+| 1. Hard rules | One set-based SQL join: income, score, age, employment (null means no constraint) |
+| 2. Rank and cap | `fit_score` (lower rate is better); top 5 per user when emailing |
+
+Measured on this repository's data (`match_runs` table):
+
+| Run | Naive pairs | Evaluated | Eligible | Skipped |
+|---|---|---|---|---|
+| First upload: 10,000 users × 8 products | 80,000 | 80,000 | 25,682 | 0% |
+| Nothing flagged | 80,000 | 0 | 0 | 100% |
+| One product's criteria changed | 80,000 | 10,000 | 929 | 87.5% |
+| 4 crawled products added | 120,000 | 40,000 | 8,179 | 66.7% |
+
+An LLM-per-pair design needs 120,000 calls for the last case. Here: 3 calls per changed crawl, none per user. Workflow B averages 1.1 s.
+
+Limit: non-numeric criteria such as "2 years of experience" are stored as `residual_criteria`, but the CSV has no matching fields, so they are not used for matching.
+
+### Other decisions
+
+| Decision | Why |
+|---|---|
+| Presigned POST + S3 event | No API Gateway or Lambda payload limits; size limit enforced by S3 |
+| Claim-and-match in one SQL statement | A crash cannot lose a flagged user; reruns are idempotent |
+| `needs_match` / `needs_rematch` flags | An unchanged re-upload flags 0 users; a changed product re-evaluates only itself |
+| Demo email guard | Recipients come only from `NOTIFY_RECIPIENTS`, never the CSV; max `NOTIFY_LIMIT` (2) per run |
+| No NAT gateway | Lambda reaches S3 through a free gateway endpoint; saves about $32/month |
 
 ## Repository layout
 
 ```
 serverless.yml          AWS stack (VPC, RDS, S3, Lambdas, API, n8n host)
 docker-compose.yml      Local stack
-n8n/workflows/          The three workflow exports (+ SES variant of C)
-src/ingestion/          Upload, CSV parsing, validation, per-table repositories
-src/common, admin, web  Shared config/db/storage, migrations Lambda, UI Lambda
-db/migrations/          Plain SQL schema migrations
-db/queries/             Reference copies of the SQL used inside n8n
-scripts/                n8n setup, AWS deploy/teardown, migrations, seeds
-tests/                  Unit tests for parsing and validation
-docs/                   codebase-tour.md (guided reading order), aws-deployment.md
-planning/               Requirements, decisions, schema, architecture
+n8n/workflows/          Workflow exports (+ SES variant of C)
+src/                    Lambda handlers and shared code
+db/                     Migrations and the SQL used in n8n
+scripts/                n8n setup, AWS deploy and teardown
+tests/                  Unit tests
+docs/                   Architecture source, AWS guide, codebase tour
 ```
 
 ## Tests
@@ -165,5 +133,3 @@ planning/               Requirements, decisions, schema, architecture
 pip install -r requirements-dev.txt
 ruff check . && pytest
 ```
-
-16 unit tests cover row validation and CSV parsing (header handling, line numbers, in-chunk duplicates). Workflows were verified end to end against the real 10,000-row file and the three live lender pages.

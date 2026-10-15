@@ -1,0 +1,53 @@
+title Loan Eligibility Engine - deployed on AWS
+direction right
+
+// Outside AWS
+Browser [icon: monitor]
+Lender sites [icon: globe]
+Gemini API [icon: google-gemini]
+Test inbox [icon: mail]
+
+// AWS
+AWS ap-southeast-2 [icon: aws] {
+  API Gateway [icon: aws-api-gateway]
+  Lambda ui [icon: aws-lambda]
+  S3 upload bucket [icon: aws-s3]
+  SES [icon: aws-ses]
+
+  VPC [icon: aws-vpc] {
+    Lambda get_upload_url [icon: aws-lambda]
+    Lambda get_status [icon: aws-lambda]
+    Lambda process_csv [icon: aws-lambda]
+    Lambda migrate [icon: aws-lambda]
+    RDS PostgreSQL [icon: aws-rds]
+
+    n8n on EC2 [icon: aws-ec2] {
+      A Product discovery [icon: n8n]
+      B User matching [icon: n8n]
+      C Notification [icon: n8n]
+    }
+  }
+}
+
+// Upload path
+Browser > API Gateway: 1 request upload link
+API Gateway > Lambda ui: page
+API Gateway > Lambda get_upload_url: link
+API Gateway > Lambda get_status: poll status
+Lambda get_upload_url > RDS PostgreSQL: uploads row
+Lambda get_status > RDS PostgreSQL: read status
+Browser > S3 upload bucket: 2 presigned POST
+S3 upload bucket > Lambda process_csv: 3 object created
+Lambda process_csv > RDS PostgreSQL: 4 upsert users
+Lambda process_csv > B User matching: 5 webhook
+Lambda migrate > RDS PostgreSQL: schema
+
+// n8n workflows
+A Product discovery > Lender sites: daily crawl
+A Product discovery > Gemini API: extract products
+A Product discovery > RDS PostgreSQL: loan_products
+B User matching > RDS PostgreSQL: funnel SQL
+B User matching > C Notification: 6 on completion
+C Notification > RDS PostgreSQL: read and mark notified
+C Notification > SES: 7 send email
+SES > Test inbox
