@@ -7,7 +7,7 @@ x-app-env: &app-env
   S3_PUBLIC_ENDPOINT_URL: http://localhost:9000
   AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
   AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
-  AWS_REGION: us-east-1
+  AWS_REGION: ap-southeast-2
   N8N_WEBHOOK_URL: http://n8n:5678/webhook/user-matching
   WEBHOOK_SECRET: ${WEBHOOK_SECRET}
 

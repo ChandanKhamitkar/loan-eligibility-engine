@@ -30,7 +30,7 @@ def get_settings() -> Settings:
         s3_bucket=os.environ["S3_BUCKET"],
         s3_endpoint_url=_optional("S3_ENDPOINT_URL"),
         s3_public_endpoint_url=_optional("S3_PUBLIC_ENDPOINT_URL"),
-        aws_region=os.environ.get("AWS_REGION", "us-east-1"),
+        aws_region=os.environ.get("AWS_REGION", "ap-southeast-2"),
         max_upload_bytes=int(os.environ.get("MAX_UPLOAD_BYTES", 50 * 1024 * 1024)),
         chunk_size=int(os.environ.get("CHUNK_SIZE", 2000)),
         n8n_webhook_url=_optional("N8N_WEBHOOK_URL"),
