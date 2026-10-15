@@ -1,0 +1,300 @@
+{
+  "id": "wfUserMatchingB",
+  "name": "B - User Loan Matching",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "user-matching",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "b-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        200
+      ],
+      "webhookId": "5b0e6c2a-7d1f-4c55-9a3e-0b6f1d2c4e11"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "secret",
+              "leftValue": "={{ $json.headers['x-webhook-secret'] }}",
+              "rightValue": "={{ $env.WEBHOOK_SECRET }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "upload",
+              "leftValue": "={{ $json.body.upload_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b-auth",
+      "name": "Secret and payload valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        220,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"error\": \"unauthorized or invalid request\"}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "b-reject",
+      "name": "Reject 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        460,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"status\": \"accepted\"}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "id": "b-accept",
+      "name": "Accept 202",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        460,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE uploads SET status = 'matching', updated_at = now()\nWHERE upload_id = $1::uuid AND status = 'processed'\nRETURNING upload_id;",
+        "options": {
+          "queryReplacement": "={{ [$('Webhook').first().json.body.upload_id] }}"
+        }
+      },
+      "id": "b-mark-matching",
+      "name": "Mark upload matching",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        680,
+        140
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "app-postgres",
+          "name": "App Postgres"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Workflow B: claim flagged users/products, run the hard-rule funnel, store matches.\n-- One statement = one transaction, so a crash cannot lose a claimed user.\n-- $1 = upload_id that triggered the run (for the run log only).\nWITH claimed_users AS (\n    UPDATE users SET needs_match = false\n    WHERE needs_match\n    RETURNING user_id\n),\nclaimed_products AS (\n    UPDATE loan_products SET needs_rematch = false\n    WHERE needs_rematch\n    RETURNING product_id\n),\n-- Stage 0: only flagged users, or any user against flagged products\nscope AS (\n    SELECT u.user_id, u.monthly_income, u.credit_score, u.age, u.employment_status,\n           p.product_id, p.min_income, p.min_credit_score, p.min_age, p.max_age,\n           p.allowed_employment, p.rate_min, p.rate_max\n    FROM users u\n    CROSS JOIN loan_products p\n    WHERE p.active\n      AND (u.user_id IN (SELECT user_id FROM claimed_users)\n           OR p.product_id IN (SELECT product_id FROM claimed_products))\n),\n-- Stage 1: hard rules. A null criterion means \"no constraint\".\neligible AS (\n    SELECT user_id, product_id,\n           100 - COALESCE(rate_min, rate_max, 30) AS fit_score\n    FROM scope\n    WHERE (min_income IS NULL OR monthly_income >= min_income)\n      AND (min_credit_score IS NULL OR credit_score >= min_credit_score)\n      AND (min_age IS NULL OR age >= min_age)\n      AND (max_age IS NULL OR age <= max_age)\n      AND (allowed_employment IS NULL OR employment_status = ANY (allowed_employment))\n),\n-- Drop unnotified matches in scope that are no longer eligible; notified ones stay as history\nremoved AS (\n    DELETE FROM matches m\n    WHERE NOT m.notified\n      AND (m.user_id IN (SELECT user_id FROM claimed_users)\n           OR m.product_id IN (SELECT product_id FROM claimed_products))\n      AND NOT EXISTS (\n          SELECT 1 FROM eligible e\n          WHERE e.user_id = m.user_id AND e.product_id = m.product_id)\n    RETURNING 1\n),\nwritten AS (\n    INSERT INTO matches (user_id, product_id, stage, fit_score)\n    SELECT user_id, product_id, 1, fit_score FROM eligible\n    ON CONFLICT (user_id, product_id) DO UPDATE\n        SET stage = EXCLUDED.stage, fit_score = EXCLUDED.fit_score\n        WHERE NOT matches.notified\n    RETURNING 1\n)\nINSERT INTO match_runs (upload_id, users_claimed, products_claimed, naive_pairs,\n                        pairs_in_scope, pairs_eligible, matches_written, matches_removed)\nSELECT $1::uuid,\n       (SELECT count(*) FROM claimed_users),\n       (SELECT count(*) FROM claimed_products),\n       (SELECT count(*) FROM users) * (SELECT count(*) FROM loan_products WHERE active),\n       (SELECT count(*) FROM scope),\n       (SELECT count(*) FROM eligible),\n       (SELECT count(*) FROM written),\n       (SELECT count(*) FROM removed)\nRETURNING *;\n",
+        "options": {
+          "queryReplacement": "={{ [$('Webhook').first().json.body.upload_id] }}"
+        }
+      },
+      "id": "b-funnel",
+      "name": "Run matching funnel",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        900,
+        140
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "app-postgres",
+          "name": "App Postgres"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE uploads SET status = 'matched', updated_at = now()\nWHERE upload_id = $1::uuid AND status = 'matching'\nRETURNING upload_id;",
+        "options": {
+          "queryReplacement": "={{ [$('Webhook').first().json.body.upload_id] }}"
+        }
+      },
+      "id": "b-mark-matched",
+      "name": "Mark upload matched",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1120,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "app-postgres",
+          "name": "App Postgres"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE uploads SET status = 'failed', error = $2, updated_at = now()\nWHERE upload_id = $1::uuid;",
+        "options": {
+          "queryReplacement": "={{ [$('Webhook').first().json.body.upload_id, 'Matching failed: ' + String($json.error?.message ?? $json.error).slice(0, 400)] }}"
+        }
+      },
+      "id": "b-mark-failed",
+      "name": "Mark upload failed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1120,
+        260
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "app-postgres",
+          "name": "App Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "wfNotificationC",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "id": "b-call-c",
+      "name": "Run notification workflow",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1360,
+        100
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Secret and payload valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Secret and payload valid?": {
+      "main": [
+        [
+          {
+            "node": "Accept 202",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Accept 202": {
+      "main": [
+        [
+          {
+            "node": "Mark upload matching",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark upload matching": {
+      "main": [
+        [
+          {
+            "node": "Run matching funnel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run matching funnel": {
+      "main": [
+        [
+          {
+            "node": "Mark upload matched",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark upload failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark upload matched": {
+      "main": [
+        [
+          {
+            "node": "Run notification workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

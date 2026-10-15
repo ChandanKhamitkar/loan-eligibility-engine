@@ -1,0 +1,10 @@
+[
+  {"lender": "Demo Bank A", "product_name": "Instant Personal Loan", "rate_min": 10.5, "rate_max": 16.0, "min_income": 30000, "min_credit_score": 700, "min_age": 21, "max_age": 58, "allowed_employment": ["Salaried"], "residual_criteria": null},
+  {"lender": "Demo Bank A", "product_name": "Salary Plus Loan", "rate_min": 11.0, "rate_max": 14.5, "min_income": 50000, "min_credit_score": 750, "min_age": 22, "max_age": 55, "allowed_employment": ["Salaried"], "residual_criteria": null},
+  {"lender": "Demo NBFC B", "product_name": "Quick Cash Loan", "rate_min": 14.0, "rate_max": 24.0, "min_income": 25000, "min_credit_score": 650, "min_age": 21, "max_age": 60, "allowed_employment": null, "residual_criteria": null},
+  {"lender": "Demo NBFC B", "product_name": "Business Growth Loan", "rate_min": 12.0, "rate_max": 18.0, "min_income": 60000, "min_credit_score": 720, "min_age": 25, "max_age": 60, "allowed_employment": ["Business", "Self-Employed"], "residual_criteria": null},
+  {"lender": "Demo Bank C", "product_name": "Self-Employed Flex Loan", "rate_min": 13.0, "rate_max": 20.0, "min_income": 40000, "min_credit_score": 680, "min_age": 25, "max_age": 55, "allowed_employment": ["Self-Employed"], "residual_criteria": null},
+  {"lender": "Demo Bank C", "product_name": "Premium Credit Loan", "rate_min": 9.9, "rate_max": 12.5, "min_income": 100000, "min_credit_score": 780, "min_age": 25, "max_age": 55, "allowed_employment": ["Salaried", "Self-Employed"], "residual_criteria": null},
+  {"lender": "Demo Fintech D", "product_name": "Young Professional Starter", "rate_min": 12.0, "rate_max": 17.0, "min_income": 30000, "min_credit_score": 670, "min_age": 22, "max_age": 35, "allowed_employment": ["Salaried"], "residual_criteria": null},
+  {"lender": "Demo Fintech D", "product_name": "Wedding and Travel Loan", "rate_min": 11.0, "rate_max": 19.0, "min_income": 35000, "min_credit_score": 700, "min_age": null, "max_age": null, "allowed_employment": null, "residual_criteria": "Loan purpose must be wedding or travel"}
+]
