@@ -95,7 +95,7 @@ A small seed JSON of products exists only as a demo safety net.
 |---|---|---|
 | 0 | SQL | Only flagged users, only active products |
 | 1 | SQL (one set-based join) | income ≥ min_income, score ≥ min_score, age in range, employment allowed. Null criterion = no constraint. |
-| 2 | n8n Code node | Normalize employment, flag near-threshold, rank, keep top 3-5 products per user |
+| 2 | Rank + cap | `fit_score` = 100 − lowest rate, stored per match. The top-5 cap is applied in Workflow C when emailing, so partial re-evaluations never see a user's full list. |
 | 3 (optional, small) | Gemini | Only products with `residual_criteria` and users who passed stage 1, per user bucket (income band × score band × employment), cached by hash. Also usable for a cached "why you match" blurb. |
 
 - **Writes:** `matches` with PK (`user_id`, `product_id`), stage, fit_score, `notified=false`. Clears `needs_match`.
@@ -104,11 +104,12 @@ A small seed JSON of products exists only as a demo safety net.
 
 ## 7. Workflow C: notification
 
-- Called by B; reads matches `WHERE notified = false`, aggregated per user (one email per user, uses `name`).
-- Recipient is always remapped to the test alias (`you+N@gmail.com`).
-- `NOTIFY_LIMIT` config in demo mode (Gmail caps ~500/day).
-- Mark `notified = true` only after a successful send. Delay between sends.
-- Gmail SMTP first, SES (sandbox, verified Gmail) after. Test early that n8n's SES node works.
+- Called by B (Execute Workflow node), or run manually from the n8n UI.
+- Picks up to `NOTIFY_LIMIT` users (default **2**) with unnotified matches, most matches first. Each email lists the user's **best 5** products (by `fit_score`); all of that user's pending matches are then marked notified.
+- **Demo guard:** recipients come only from `NOTIFY_RECIPIENTS` (round-robin), never from the CSV; the cap is enforced both in the SQL `LIMIT` and again in the email-building node. The cap is **per run**.
+- `matches.notified = true` only after a successful send; a failed send stays pending.
+- Gmail SMTP now (credential built from `.env` by `scripts/n8n_setup.py`); swap the send node to AWS SES later. Email building is a separate node.
+- After the run, uploads in `matched` become `notified`. In demo mode this means "this run's emails were sent", not that all 10k users were emailed.
 
 ## 8. Edge cases
 

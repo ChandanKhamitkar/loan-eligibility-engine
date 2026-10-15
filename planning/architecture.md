@@ -10,7 +10,7 @@ Everything runs in Docker Compose on one machine.
 flowchart LR
     UI["Browser UI<br/>static HTML"] -->|"1 get upload URL"| API["Local API adapter<br/>Flask, wraps handlers"]
     API -->|"presigned URL"| UI
-    UI -->|"2 PUT csv"| OBJ[("Object storage<br/>MinIO")]
+    UI -->|"2 POST csv, presigned"| OBJ[("Object storage<br/>MinIO")]
     OBJ -->|"3 ObjectCreated notification"| API
     API -->|"4 parse + upsert"| PG[("Postgres<br/>app DB")]
     API -->|"5 webhook: upload_id"| N8N["n8n<br/>Workflows A B C"]
@@ -36,7 +36,7 @@ flowchart LR
     UI["Browser UI<br/>S3 static site or local"] -->|"1 request upload"| APIGW["API Gateway"]
     APIGW --> L1["Lambda<br/>get_upload_url"]
     L1 -->|"presigned URL"| UI
-    UI -->|"2 PUT csv"| S3[("S3 bucket")]
+    UI -->|"2 POST csv, presigned"| S3[("S3 bucket")]
     S3 -->|"3 ObjectCreated"| L2["Lambda<br/>process_csv"]
     L2 -->|"4 validate + upsert"| RDS[("RDS Postgres")]
     L2 -->|"5 webhook + secret"| N8N["n8n in Docker<br/>EC2 or local + tunnel"]
@@ -64,8 +64,8 @@ sequenceDiagram
 
     U->>A: POST /uploads (filename)
     A->>D: insert uploads (status=uploaded)
-    A-->>U: upload_id + presigned PUT URL
-    U->>S: PUT file directly
+    A-->>U: upload_id + presigned POST url + fields
+    U->>S: POST file directly (presigned POST, size-limited)
     S->>P: ObjectCreated event
     P->>D: status=processing
     loop each chunk

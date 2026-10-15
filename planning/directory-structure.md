@@ -8,7 +8,9 @@ loan-eligibility-engine/
 ├── serverless.yml             # AWS resources: S3, Lambdas, API Gateway, RDS
 ├── docker-compose.yml         # Local stack: Postgres, n8n, MinIO, local API adapter
 ├── .env.example               # All config keys, no secrets
-├── pyproject.toml             # ruff + pytest config, Python deps
+├── pyproject.toml             # ruff + pytest config
+├── requirements.txt           # runtime deps (+ requirements-dev.txt)
+├── docker/                    # api.Dockerfile, postgres/init (creates n8n DB)
 ├── .gitignore
 │
 ├── src/                       # All Python code
@@ -16,12 +18,14 @@ loan-eligibility-engine/
 │   │   ├── config.py          #   env vars, validated once
 │   │   ├── db.py              #   connection helper
 │   │   ├── storage.py         #   S3/MinIO client (endpoint from config)
-│   │   └── logging.py
+│   │   ├── http.py            #   API response helper
+│   │   └── log.py
 │   ├── ingestion/             # CSV upload pipeline
 │   │   ├── handlers/          #   thin Lambda entry points
 │   │   │   ├── get_upload_url.py
 │   │   │   ├── process_csv.py
 │   │   │   └── get_status.py
+│   │   ├── service.py         #   orchestrates one upload end to end
 │   │   ├── parser.py          #   stream + chunk CSV
 │   │   ├── validators.py      #   row validation + normalization (pure)
 │   │   ├── repository.py      #   upsert users, update uploads
@@ -44,9 +48,10 @@ loan-eligibility-engine/
 │
 ├── db/
 │   ├── migrations/            # Numbered, plain SQL: 0001_init.sql, ...
-│   └── queries/               # Reference copies of SQL used inside n8n (funnel)
+│   ├── queries/               # Reference copies of SQL used inside n8n (match_funnel.sql)
+│   └── seed/                  # products.json: demo products for testing without the crawler
 │
-├── scripts/                   # migrate.py, seed_products.py (fallback demo products)
+├── scripts/                   # migrate.py, seed_products.py, n8n_setup.py (import credentials + workflows)
 ├── tests/
 │   ├── unit/                  # validators, parser, chunk dedupe
 │   └── integration/           # upsert flags, funnel SQL on fixture data

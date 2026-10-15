@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Loan Eligibility Engine</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main>
+    <h1>Upload users</h1>
+    <p class="hint">CSV columns: user_id, name, email, monthly_income, credit_score, employment_status, age</p>
+
+    <form id="upload-form">
+      <label class="dropzone" for="file">
+        <span id="file-label">Choose a CSV file</span>
+        <input id="file" type="file" accept=".csv,text/csv" required>
+      </label>
+      <button id="submit" type="submit">Upload</button>
+    </form>
+
+    <section id="status" hidden>
+      <h2>Status</h2>
+      <ol id="steps">
+        <li data-step="uploaded">Uploaded</li>
+        <li data-step="processing">Parsing CSV</li>
+        <li data-step="processed">Users saved</li>
+        <li data-step="matching">Matching loans</li>
+        <li data-step="matched">Matches stored</li>
+        <li data-step="notified">Emails sent</li>
+      </ol>
+      <dl id="counts"></dl>
+      <p id="message" role="status"></p>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
