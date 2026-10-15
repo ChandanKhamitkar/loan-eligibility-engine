@@ -68,6 +68,19 @@ An LLM-per-pair design would need 120,000 calls for the same data. Here: **3 cal
 
 Honest limit: pages also carry criteria that are not numeric ("2 years of work experience"). These are stored as `residual_criteria`, but the CSV has no matching user fields, so nothing can be judged against them and they are not used for matching.
 
+## Web crawling strategy
+
+| Aspect | Choice |
+|---|---|
+| Sources | Three public personal-loan pages (Tata Capital, IDFC FIRST Bank, ICICI Bank), stored as rows in `crawl_sources`. Adding a site is one `INSERT`, with no workflow change. |
+| Fetching | Plain HTTP GET with a browser User-Agent, 30 s timeout, 3 tries, once per source per day. All three pages serve their rates and eligibility in the HTML, so no JavaScript rendering is needed. |
+| Cleaning | Remove scripts, styles, navigation, footers, SVG, iframes and embedded JSON; keep table cells as text; drop duplicate lines; cap at 80,000 characters. About 95% smaller than the raw page, which keeps the LLM call cheap. |
+| Change detection | SHA-256 of the **cleaned** text. Unchanged pages stop here, with no LLM call. |
+| Extraction | An LLM with a strict JSON schema, not CSS selectors, because it survives layout changes and normalises criteria (lakhs to rupees, monthly to annual rates, "21 to 60 years" to two numbers) in one step. Unknown values are `null`, never guessed. If eligibility differs by employment type, the page yields one product per segment. |
+| Safety | Output is validated (ranges, allowed values) before it is saved; failures are recorded with their reason; a failed or empty crawl never removes existing products; crawled products not seen for 7 days are deactivated, not deleted. |
+
+Limits: `robots.txt` is not consulted (the pages are public marketing pages fetched once a day), and a site that blocks the request is recorded as `fetch_failed` rather than worked around.
+
 ## Design decisions
 
 | Decision | Why |
