@@ -30,7 +30,7 @@ Source brief: `The Loan Eligibility Engine (Engineering Intern)-clickpe.docx` (s
 |---|---|
 | Language | Python |
 | Phase 1 (build) | Everything local in Docker Compose: Postgres, n8n, S3-compatible storage (MinIO if its image/licence works, else a simple local upload service), processor service |
-| Phase 2 (after it works) | Real AWS: S3 + Lambda + RDS via `serverless.yml`. Cloudflare R2 only as fallback (cannot trigger Lambda). |
+| Phase 2 | Real AWS via `serverless.yml` (Serverless v3): S3 + presigned POST, Lambdas (ui, upload URL, status, CSV processor, migrate) behind an HTTP API, private RDS Postgres 17, and n8n in Docker on EC2, all in one VPC with no NAT gateway. n8n is bootstrapped from a bundle in S3; email via SES. `scripts/aws_deploy.py` / `aws_teardown.py`; guide in `docs/aws-deployment.md`. The local stack stays fully working as the fallback for the demo video. |
 | Email | Gmail SMTP (app password) first; swap to AWS SES node after everything works. Email body built in its own node so only the send node changes. |
 | LLM | Gemini Flash, structured JSON output (response schema). No PII (no emails/names) in prompts. |
 | Python libs | Plain handlers + `boto3`, `psycopg` 3, stdlib `csv`. Flask only as a local adapter around the same handlers. No Django, pandas or ORM. |

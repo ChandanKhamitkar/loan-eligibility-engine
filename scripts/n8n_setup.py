@@ -1,8 +1,13 @@
 """Load credentials and workflows from the repo into the running n8n container.
 
-Host-side helper (needs Docker). Credentials are built from .env and never written to disk
-on the host. Usage: python scripts/n8n_setup.py
+Runs on the host (local) or on the EC2 instance (AWS); both need Docker. Credentials are
+built from .env and never written to disk outside the container. Usage:
+python scripts/n8n_setup.py
+
+Optional .env keys: APP_DB_HOST / APP_DB_SSL (RDS), EMAIL_PROVIDER=ses (default smtp).
 """
+
+from __future__ import annotations
 
 import json
 import subprocess
@@ -11,6 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS_DIR = ROOT / "n8n" / "workflows"
+SES_VARIANT = "/workflows/variants/c_notification_ses.json"
 CREDENTIALS_FILE_IN_CONTAINER = "/tmp/credentials.json"
 
 
@@ -28,50 +34,70 @@ def n8n(*args: str, stdin: str | None = None) -> None:
     subprocess.run(command, input=stdin, text=True, check=True, cwd=ROOT)
 
 
-def credentials(env: dict[str, str]) -> list[dict]:
-    creds = [
+def postgres_credential(env: dict[str, str]) -> dict:
+    ssl = env.get("APP_DB_SSL", "disable")
+    return {
+        "id": "app-postgres",
+        "name": "App Postgres",
+        "type": "postgres",
+        "data": {
+            "host": env.get("APP_DB_HOST", "postgres"),
+            "port": 5432,
+            "database": env["POSTGRES_DB"],
+            "user": env["POSTGRES_USER"],
+            "password": env["POSTGRES_PASSWORD"],
+            "ssl": ssl,
+            # RDS certificates are not in n8n's trust store; the connection is still encrypted
+            "allowUnauthorizedCerts": ssl != "disable",
+            "maxConnections": 10,
+        },
+    }
+
+
+def email_credentials(env: dict[str, str]) -> list[dict]:
+    if env.get("EMAIL_PROVIDER", "smtp") == "ses":
+        return [
+            {
+                "id": "aws-ses",
+                "name": "AWS SES",
+                "type": "aws",
+                "data": {
+                    "region": env["SES_REGION"],
+                    "accessKeyId": env["SES_AWS_ACCESS_KEY_ID"],
+                    "secretAccessKey": env["SES_AWS_SECRET_ACCESS_KEY"],
+                },
+            }
+        ]
+    if not env.get("GMAIL_APP_PASSWORD"):
+        print("GMAIL_APP_PASSWORD is empty: skipping the SMTP credential (emails will fail).")
+        return []
+    return [
         {
-            "id": "app-postgres",
-            "name": "App Postgres",
-            "type": "postgres",
+            "id": "gmail-smtp",
+            "name": "Gmail SMTP",
+            "type": "smtp",
             "data": {
-                "host": "postgres",
-                "port": 5432,
-                "database": env["POSTGRES_DB"],
-                "user": env["POSTGRES_USER"],
-                "password": env["POSTGRES_PASSWORD"],
-                "ssl": "disable",
-                "maxConnections": 10,
+                "host": "smtp.gmail.com",
+                "port": 465,
+                "secure": True,
+                "user": env["GMAIL_USER"],
+                "password": env["GMAIL_APP_PASSWORD"],
             },
         }
     ]
-    if env.get("GMAIL_APP_PASSWORD"):
-        creds.append(
-            {
-                "id": "gmail-smtp",
-                "name": "Gmail SMTP",
-                "type": "smtp",
-                "data": {
-                    "host": "smtp.gmail.com",
-                    "port": 465,
-                    "secure": True,
-                    "user": env["GMAIL_USER"],
-                    "password": env["GMAIL_APP_PASSWORD"],
-                },
-            }
-        )
-    else:
-        print("GMAIL_APP_PASSWORD is empty: skipping the SMTP credential (emails will fail).")
-    return creds
 
 
 def main() -> None:
     env = read_env()
-    n8n("sh", "-c", f"cat > {CREDENTIALS_FILE_IN_CONTAINER}", stdin=json.dumps(credentials(env)))
+    credentials = [postgres_credential(env), *email_credentials(env)]
+    n8n("sh", "-c", f"cat > {CREDENTIALS_FILE_IN_CONTAINER}", stdin=json.dumps(credentials))
     n8n("n8n", "import:credentials", f"--input={CREDENTIALS_FILE_IN_CONTAINER}")
     n8n("rm", "-f", CREDENTIALS_FILE_IN_CONTAINER)
 
     n8n("n8n", "import:workflow", "--separate", "--input=/workflows")
+    if env.get("EMAIL_PROVIDER") == "ses":
+        # Same workflow id, so this replaces the SMTP version of workflow C
+        n8n("n8n", "import:workflow", f"--input={SES_VARIANT}")
     for path in sorted(WORKFLOWS_DIR.glob("*.json")):
         workflow = json.loads(path.read_text(encoding="utf-8"))
         n8n("n8n", "publish:workflow", f"--id={workflow['id']}")

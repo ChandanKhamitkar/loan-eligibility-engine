@@ -7,6 +7,9 @@ loan-eligibility-engine/
 ├── README.md                  # Final deliverable: architecture diagram, setup, design decisions
 ├── serverless.yml             # AWS resources: S3, Lambdas, API Gateway, RDS
 ├── docker-compose.yml         # Local stack: Postgres, n8n, MinIO, local API adapter
+├── docker-compose.aws.yml     # n8n only, run on the EC2 host in the AWS deployment
+├── package.json               # Serverless Framework v3 + python-requirements plugin
+├── requirements-lambda.txt    # Dependencies packaged into the Lambdas
 ├── .env.example               # All config keys, no secrets
 ├── pyproject.toml             # ruff + pytest config
 ├── requirements.txt           # runtime deps (+ requirements-dev.txt)
@@ -14,6 +17,8 @@ loan-eligibility-engine/
 ├── .gitignore
 │
 ├── src/                       # All Python code
+│   ├── admin/                 # migrate.py: Lambda that runs migrations inside the VPC
+│   ├── web/                   # serve_ui.py: Lambda that serves ui/ from the API origin
 │   ├── common/                # Shared by every service
 │   │   ├── config.py          #   env vars, validated once
 │   │   ├── db.py              #   connection helper
@@ -43,20 +48,20 @@ loan-eligibility-engine/
 │   │   ├── a_product_discovery.json
 │   │   ├── b_user_matching.json
 │   │   ├── c_notification.json
-│   │   └── error_handler.json
+│   │   └── variants/          #   c_notification_ses.json: workflow C using AWS SES
 │
 ├── db/
 │   ├── migrations/            # Numbered, plain SQL: 0001_init.sql, ...
 │   ├── queries/               # Reference copies of SQL used inside n8n (match_funnel.sql)
 │   └── seed/                  # products.json: demo products for testing without the crawler
 │
-├── scripts/                   # migrate.py, seed_products.py, n8n_setup.py (import credentials + workflows)
+├── scripts/                   # migrate.py, seed_products.py, n8n_setup.py, aws_deploy.py, aws_teardown.py
 ├── tests/
 │   ├── unit/                  # validators, parser, chunk dedupe
 │   └── integration/           # upsert flags, funnel SQL on fixture data
 │
 ├── data/                      # users.csv (10k), demo_users.csv (~20 rows)
-├── docs/                      # Final docs assets: architecture diagram image, setup guide, screenshots
+├── docs/                      # aws-deployment.md; later the architecture diagram image and screenshots
 └── planning/                  # Pre-build planning (this folder)
 ```
 

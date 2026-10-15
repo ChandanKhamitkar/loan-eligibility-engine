@@ -1,0 +1,31 @@
+# n8n on the EC2 host. Postgres, storage and the API are AWS services in this setup.
+# The deploy script bundles this file with a generated .env that sets COMPOSE_FILE.
+name: loan-engine-n8n
+
+services:
+  n8n:
+    image: n8nio/n8n:2.43.5
+    restart: unless-stopped
+    environment:
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      # The editor is served over plain HTTP (restricted to the operator's IP by security group)
+      N8N_SECURE_COOKIE: "false"
+      WEBHOOK_URL: ${N8N_PUBLIC_URL}/
+      GENERIC_TIMEZONE: Asia/Kolkata
+      TZ: Asia/Kolkata
+      NODE_FUNCTION_ALLOW_BUILTIN: crypto
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+      NOTIFY_LIMIT: ${NOTIFY_LIMIT:-2}
+      NOTIFY_RECIPIENTS: ${NOTIFY_RECIPIENTS}
+      SES_FROM: ${SES_FROM}
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows:ro
+
+volumes:
+  n8n_data:

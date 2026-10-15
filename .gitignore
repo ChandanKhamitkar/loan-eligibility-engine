@@ -6,3 +6,5 @@ __pycache__/
 .ruff_cache/
 .serverless/
 node_modules/
+.env.aws
+*.tgz

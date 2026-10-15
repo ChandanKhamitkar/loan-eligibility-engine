@@ -1,0 +1,9 @@
+{
+  "name": "loan-eligibility-engine",
+  "private": true,
+  "description": "Serverless Framework tooling for the AWS deployment",
+  "devDependencies": {
+    "serverless": "3.40.0",
+    "serverless-python-requirements": "6.1.2"
+  }
+}

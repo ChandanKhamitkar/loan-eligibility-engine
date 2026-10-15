@@ -1,0 +1,342 @@
+service: loan-eligibility-engine
+frameworkVersion: "3"
+useDotenv: true
+
+plugins:
+  - serverless-python-requirements
+
+custom:
+  uploadBucket: ${self:service}-uploads-${aws:accountId}-${self:provider.region}
+  vpc:
+    securityGroupIds:
+      - Ref: LambdaSecurityGroup
+    subnetIds:
+      - Ref: PublicSubnetA
+      - Ref: PublicSubnetB
+  pythonRequirements:
+    fileName: requirements-lambda.txt
+    dockerizePip: non-linux
+    slim: true
+
+package:
+  patterns:
+    - "!**"
+    - src/**
+    - ui/**
+    - db/migrations/**
+
+provider:
+  name: aws
+  runtime: python3.12
+  stage: ${opt:stage, 'aws'}
+  region: ${opt:region, 'ap-south-1'}
+  memorySize: 512
+  timeout: 25
+  logRetentionInDays: 7
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action: [s3:GetObject, s3:PutObject]
+          Resource: arn:aws:s3:::${self:custom.uploadBucket}/uploads/*
+  environment:
+    DATABASE_URL:
+      Fn::Join:
+        - ""
+        - - postgresql://${env:DB_USER}:${env:DB_PASSWORD}@
+          - Fn::GetAtt: [Database, Endpoint.Address]
+          - :5432/${env:DB_NAME}?sslmode=require
+    S3_BUCKET: ${self:custom.uploadBucket}
+    WEBHOOK_SECRET: ${env:WEBHOOK_SECRET}
+    N8N_WEBHOOK_URL:
+      Fn::Join:
+        - ""
+        - - http://
+          - Fn::GetAtt: [N8nInstance, PrivateIp]
+          - :5678/webhook/user-matching
+
+functions:
+  ui:
+    handler: src.web.serve_ui.handler
+    events:
+      - httpApi: "GET /"
+      - httpApi: "GET /{file}"
+
+  getUploadUrl:
+    handler: src.ingestion.handlers.get_upload_url.handler
+    vpc: ${self:custom.vpc}
+    events:
+      - httpApi: "POST /uploads"
+
+  getStatus:
+    handler: src.ingestion.handlers.get_status.handler
+    vpc: ${self:custom.vpc}
+    events:
+      - httpApi: "GET /uploads/{upload_id}"
+
+  # Triggered by the S3 notification declared under resources
+  processCsv:
+    handler: src.ingestion.handlers.process_csv.handler
+    vpc: ${self:custom.vpc}
+    memorySize: 1024
+    timeout: 300
+
+  migrate:
+    handler: src.admin.migrate.handler
+    vpc: ${self:custom.vpc}
+    timeout: 120
+
+resources:
+  Resources:
+    # ---- Network: public subnets only, so no NAT gateway (about $32/month) is needed.
+    # Lambda ENIs get no public IP, so they only reach the VPC and S3 (gateway endpoint).
+    Vpc:
+      Type: AWS::EC2::VPC
+      Properties:
+        CidrBlock: 10.20.0.0/16
+        EnableDnsSupport: true
+        EnableDnsHostnames: true
+        Tags: [{ Key: Name, Value: "${self:service}" }]
+
+    InternetGateway:
+      Type: AWS::EC2::InternetGateway
+
+    InternetGatewayAttachment:
+      Type: AWS::EC2::VPCGatewayAttachment
+      Properties:
+        VpcId: { Ref: Vpc }
+        InternetGatewayId: { Ref: InternetGateway }
+
+    PublicSubnetA:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: { Ref: Vpc }
+        CidrBlock: 10.20.1.0/24
+        AvailabilityZone: { "Fn::Select": [0, { "Fn::GetAZs": "" }] }
+        MapPublicIpOnLaunch: true
+
+    PublicSubnetB:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: { Ref: Vpc }
+        CidrBlock: 10.20.2.0/24
+        AvailabilityZone: { "Fn::Select": [1, { "Fn::GetAZs": "" }] }
+        MapPublicIpOnLaunch: true
+
+    PublicRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId: { Ref: Vpc }
+
+    PublicRoute:
+      Type: AWS::EC2::Route
+      DependsOn: InternetGatewayAttachment
+      Properties:
+        RouteTableId: { Ref: PublicRouteTable }
+        DestinationCidrBlock: 0.0.0.0/0
+        GatewayId: { Ref: InternetGateway }
+
+    SubnetARouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId: { Ref: PublicSubnetA }
+        RouteTableId: { Ref: PublicRouteTable }
+
+    SubnetBRouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId: { Ref: PublicSubnetB }
+        RouteTableId: { Ref: PublicRouteTable }
+
+    S3GatewayEndpoint:
+      Type: AWS::EC2::VPCEndpoint
+      Properties:
+        VpcId: { Ref: Vpc }
+        ServiceName: com.amazonaws.${aws:region}.s3
+        VpcEndpointType: Gateway
+        RouteTableIds: [{ Ref: PublicRouteTable }]
+
+    # ---- Security groups: the database accepts connections only from Lambda and n8n.
+    LambdaSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Lambda functions
+        VpcId: { Ref: Vpc }
+
+    N8nSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: n8n host
+        VpcId: { Ref: Vpc }
+        SecurityGroupIngress:
+          - Description: Matching webhook from Lambda
+            IpProtocol: tcp
+            FromPort: 5678
+            ToPort: 5678
+            SourceSecurityGroupId: { Ref: LambdaSecurityGroup }
+          - Description: n8n editor for the operator
+            IpProtocol: tcp
+            FromPort: 5678
+            ToPort: 5678
+            CidrIp: ${env:ADMIN_CIDR}
+
+    DatabaseSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Postgres
+        VpcId: { Ref: Vpc }
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 5432
+            ToPort: 5432
+            SourceSecurityGroupId: { Ref: LambdaSecurityGroup }
+          - IpProtocol: tcp
+            FromPort: 5432
+            ToPort: 5432
+            SourceSecurityGroupId: { Ref: N8nSecurityGroup }
+
+    # ---- Database
+    DatabaseSubnetGroup:
+      Type: AWS::RDS::DBSubnetGroup
+      Properties:
+        DBSubnetGroupDescription: Private database access
+        SubnetIds: [{ Ref: PublicSubnetA }, { Ref: PublicSubnetB }]
+
+    Database:
+      Type: AWS::RDS::DBInstance
+      DeletionPolicy: Delete
+      Properties:
+        Engine: postgres
+        EngineVersion: "17"
+        DBInstanceClass: db.t4g.micro
+        AllocatedStorage: "20"
+        StorageType: gp3
+        StorageEncrypted: true
+        DBName: ${env:DB_NAME}
+        MasterUsername: ${env:DB_USER}
+        MasterUserPassword: ${env:DB_PASSWORD}
+        PubliclyAccessible: false
+        MultiAZ: false
+        BackupRetentionPeriod: 0
+        DBSubnetGroupName: { Ref: DatabaseSubnetGroup }
+        VPCSecurityGroups: [{ Ref: DatabaseSecurityGroup }]
+
+    # ---- Upload bucket: private, browser uploads via presigned POST, S3 event starts the parser.
+    UploadBucket:
+      Type: AWS::S3::Bucket
+      DependsOn: UploadBucketInvokePermission
+      Properties:
+        BucketName: ${self:custom.uploadBucket}
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+        CorsConfiguration:
+          CorsRules:
+            - AllowedMethods: [POST]
+              AllowedHeaders: ["*"]
+              AllowedOrigins:
+                - Fn::Join:
+                    - ""
+                    - - https://
+                      - Ref: HttpApi
+                      - .execute-api.${aws:region}.amazonaws.com
+              MaxAge: 3000
+        LifecycleConfiguration:
+          Rules:
+            - Id: expire-uploads
+              Status: Enabled
+              Prefix: uploads/
+              ExpirationInDays: 7
+        NotificationConfiguration:
+          LambdaConfigurations:
+            - Event: s3:ObjectCreated:*
+              Function: { "Fn::GetAtt": [ProcessCsvLambdaFunction, Arn] }
+              Filter:
+                S3Key:
+                  Rules:
+                    - { Name: prefix, Value: uploads/ }
+                    - { Name: suffix, Value: .csv }
+
+    # Uses the literal bucket ARN rather than Ref, which would make the bucket and permission circular
+    UploadBucketInvokePermission:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName: { "Fn::GetAtt": [ProcessCsvLambdaFunction, Arn] }
+        Action: lambda:InvokeFunction
+        Principal: s3.amazonaws.com
+        SourceAccount: { Ref: "AWS::AccountId" }
+        SourceArn: arn:aws:s3:::${self:custom.uploadBucket}
+
+    # ---- n8n host: reads its bundle (compose file, workflows, .env) from the bucket on first boot
+    N8nInstanceRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal: { Service: ec2.amazonaws.com }
+              Action: sts:AssumeRole
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        Policies:
+          - PolicyName: read-bootstrap-bundle
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action: s3:GetObject
+                  Resource: arn:aws:s3:::${self:custom.uploadBucket}/bootstrap/*
+
+    N8nInstanceProfile:
+      Type: AWS::IAM::InstanceProfile
+      Properties:
+        Roles: [{ Ref: N8nInstanceRole }]
+
+    N8nInstance:
+      Type: AWS::EC2::Instance
+      Properties:
+        ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}"
+        InstanceType: ${env:N8N_INSTANCE_TYPE, 't3.small'}
+        SubnetId: { Ref: PublicSubnetA }
+        SecurityGroupIds: [{ Ref: N8nSecurityGroup }]
+        IamInstanceProfile: { Ref: N8nInstanceProfile }
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs: { VolumeSize: 20, VolumeType: gp3 }
+        Tags: [{ Key: Name, Value: "${self:service}-n8n" }]
+        UserData:
+          Fn::Base64: |
+            #!/bin/bash
+            set -euxo pipefail
+            dnf install -y docker python3
+            systemctl enable --now docker
+            mkdir -p /usr/local/lib/docker/cli-plugins /opt/app
+            curl -fsSL https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-linux-x86_64 \
+              -o /usr/local/lib/docker/cli-plugins/docker-compose
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+            # The deploy script uploads the bundle after the stack exists, so wait for it
+            until aws s3 cp s3://${self:custom.uploadBucket}/bootstrap/n8n-bundle.tgz /tmp/bundle.tgz; do sleep 20; done
+            tar -xzf /tmp/bundle.tgz -C /opt/app
+            cd /opt/app
+            TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 300')
+            PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4)
+            echo "N8N_PUBLIC_URL=http://$PUBLIC_IP:5678" >> .env
+            docker compose up -d
+            until curl -sf http://localhost:5678/healthz; do sleep 5; done
+            python3 scripts/n8n_setup.py
+
+  Outputs:
+    UploadBucketName:
+      Value: { Ref: UploadBucket }
+    DatabaseHost:
+      Value: { "Fn::GetAtt": [Database, Endpoint.Address] }
+    N8nPublicIp:
+      Value: { "Fn::GetAtt": [N8nInstance, PublicIp] }
+    N8nPrivateIp:
+      Value: { "Fn::GetAtt": [N8nInstance, PrivateIp] }

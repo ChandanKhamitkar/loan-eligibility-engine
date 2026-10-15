@@ -1,0 +1,254 @@
+{
+  "id": "wfNotificationC",
+  "name": "C - User Notification",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "c-trigger",
+      "name": "Called by workflow B",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        140
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "c-manual",
+      "name": "Run manually",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Workflow C: pick up to $1 users with unnotified matches (most matches first), each with their best 5 products.\n-- Only the top 5 are shown; all of a user's pending matches are marked notified afterwards.\nWITH ranked AS (\n    SELECT m.user_id, m.product_id,\n           row_number() OVER (PARTITION BY m.user_id\n                              ORDER BY m.fit_score DESC, m.product_id) AS rn\n    FROM matches m\n    JOIN loan_products p ON p.product_id = m.product_id AND p.active\n    WHERE NOT m.notified\n),\npicked AS (\n    SELECT user_id FROM ranked GROUP BY user_id ORDER BY count(*) DESC, user_id LIMIT $1::int\n)\nSELECT u.user_id, u.name,\n       json_agg(json_build_object(\n           'lender', p.lender, 'product_name', p.product_name,\n           'rate_min', p.rate_min, 'rate_max', p.rate_max) ORDER BY r.rn) AS products\nFROM picked pk\nJOIN users u ON u.user_id = pk.user_id\nJOIN ranked r ON r.user_id = u.user_id AND r.rn <= 5\nJOIN loan_products p ON p.product_id = r.product_id\nGROUP BY u.user_id, u.name\nORDER BY u.user_id;\n",
+        "options": {
+          "queryReplacement": "={{ [Number($env.NOTIFY_LIMIT || 2)] }}"
+        }
+      },
+      "id": "c-select",
+      "name": "Select users to notify",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        240,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "app-postgres",
+          "name": "App Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Demo guard: recipients come only from NOTIFY_RECIPIENTS, never from the CSV, and the run is capped.\nconst limit = Number($env.NOTIFY_LIMIT || 2);\nconst recipients = ($env.NOTIFY_RECIPIENTS || '').split(',').map((s) => s.trim()).filter(Boolean);\nif (!recipients.length) throw new Error('NOTIFY_RECIPIENTS is not set');\n\nconst esc = (value) =>\n  String(value ?? '').replace(/[&<>\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\n\nconst rate = ({ rate_min: lo, rate_max: hi }) => {\n  if (lo == null && hi == null) return 'Rate on request';\n  if (lo == null || hi == null || Number(lo) === Number(hi)) return `${Number(lo ?? hi)}% p.a.`;\n  return `${Number(lo)}% - ${Number(hi)}% p.a.`;\n};\n\nreturn $input.all().slice(0, limit).map((item, i) => {\n  const { user_id, name, products } = item.json;\n  const rows = products\n    .map((p) => `<tr><td style=\"padding:8px 12px;border-bottom:1px solid #eee\"><strong>${esc(p.product_name)}</strong><br><span style=\"color:#667\">${esc(p.lender)}</span></td><td style=\"padding:8px 12px;border-bottom:1px solid #eee;white-space:nowrap\">${esc(rate(p))}</td></tr>`)\n    .join('');\n  const html = `<div style=\"font-family:system-ui,sans-serif;max-width:560px;margin:auto;color:#1c2430\">\n<h2 style=\"margin-bottom:4px\">Hi ${esc(name)},</h2>\n<p>Based on your profile, you may qualify for these personal loans:</p>\n<table style=\"width:100%;border-collapse:collapse\">${rows}</table>\n<p style=\"color:#667;font-size:13px;margin-top:24px\">Final approval and rates depend on the lender's verification.</p>\n<p style=\"color:#99a;font-size:12px\">Demo mode: sent to a test inbox. Intended for ${esc(name)} (user ${esc(user_id.slice(0, 8))}).</p>\n</div>`;\n  return {\n    json: {\n      user_id,\n      from: $env.SES_FROM,\n      to: recipients[i % recipients.length],\n      subject: `${products.length} loan offer${products.length > 1 ? 's' : ''} you may qualify for`,\n      html,\n    },\n  };\n});\n"
+      },
+      "id": "c-build",
+      "name": "Build email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "email",
+        "operation": "send",
+        "fromEmail": "={{ $json.from }}",
+        "toAddresses": [
+          "={{ $json.to }}"
+        ],
+        "subject": "={{ $json.subject }}",
+        "isBodyHtml": true,
+        "body": "={{ $json.html }}",
+        "additionalFields": {}
+      },
+      "id": "c-send",
+      "name": "Send email (AWS SES)",
+      "type": "n8n-nodes-base.awsSes",
+      "typeVersion": 1,
+      "position": [
+        720,
+        200
+      ],
+      "credentials": {
+        "aws": {
+          "id": "aws-ses",
+          "name": "AWS SES"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE matches SET notified = true, notified_at = now()\nWHERE user_id = $1::uuid AND NOT notified\nRETURNING user_id;",
+        "options": {
+          "queryReplacement": "={{ [$('Build email').item.json.user_id] }}"
+        }
+      },
+      "id": "c-mark",
+      "name": "Mark user matches notified",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        960,
+        140
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "app-postgres",
+          "name": "App Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "c-failed",
+      "name": "Send failed, left pending",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        960,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "id": "c-agg",
+      "name": "All sent",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE uploads SET status = 'notified', updated_at = now() WHERE status = 'matched' RETURNING upload_id;",
+        "options": {}
+      },
+      "id": "c-done",
+      "name": "Mark uploads notified",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1440,
+        140
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "app-postgres",
+          "name": "App Postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Called by workflow B": {
+      "main": [
+        [
+          {
+            "node": "Select users to notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run manually": {
+      "main": [
+        [
+          {
+            "node": "Select users to notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select users to notify": {
+      "main": [
+        [
+          {
+            "node": "Build email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build email": {
+      "main": [
+        [
+          {
+            "node": "Send email (AWS SES)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send email (AWS SES)": {
+      "main": [
+        [
+          {
+            "node": "Mark user matches notified",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send failed, left pending",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark user matches notified": {
+      "main": [
+        [
+          {
+            "node": "All sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "All sent": {
+      "main": [
+        [
+          {
+            "node": "Mark uploads notified",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}
