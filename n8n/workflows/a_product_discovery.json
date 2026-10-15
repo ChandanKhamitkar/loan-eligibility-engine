@@ -1,0 +1,563 @@
+{
+  "id": "wfProductDiscoveryA",
+  "name": "A - Loan Product Discovery",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 2
+            }
+          ]
+        }
+      },
+      "id": "a-schedule",
+      "name": "Daily at 02:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        100
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "a-manual",
+      "name": "Run manually",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT source_id, lender, url, content_hash AS previous_hash\nFROM crawl_sources WHERE enabled ORDER BY source_id;",
+        "options": {}
+      },
+      "id": "a-load",
+      "name": "Load enabled sources",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        240,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "app-postgres",
+          "name": "App Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+            },
+            {
+              "name": "Accept-Language",
+              "value": "en-IN,en;q=0.9"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "a-fetch",
+      "name": "Fetch page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        200
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Strip markup so the LLM sees only readable text, then fingerprint it for change detection.\nconst MAX_CHARS = 80000;\nconst ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '\"', apos: \"'\", nbsp: ' ', rsquo: \"'\", lsquo: \"'\", rdquo: '\"', ldquo: '\"', ndash: '-', mdash: '-', hellip: '...' };\n\nconst decode = (s) =>\n  s.replace(/&#(\\d+);/g, (_, n) => String.fromCodePoint(Number(n)))\n    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))\n    .replace(/&([a-z]+);/gi, (m, n) => ENTITIES[n.toLowerCase()] ?? m);\n\nconst text = decode(\n  $json.data\n    .replace(/<(script|style|noscript|svg|nav|footer|header|iframe)\\b[\\s\\S]*?<\\/\\1>/gi, ' ')\n    .replace(/<!--[\\s\\S]*?-->/g, ' ')\n    .replace(/<\\/(p|div|li|tr|h[1-6]|section|table|ul|ol)>|<br\\s*\\/?>/gi, '\\n')\n    .replace(/<\\/t[dh]>/gi, ' | ')\n    .replace(/<[^>]+>/g, ' ')\n);\n\nconst lines = [];\nfor (const raw of text.split('\\n')) {\n  const line = raw.replace(/\\s+/g, ' ').trim();\n  // Very long lines are embedded JSON blobs, not prose\n  if (!line || line.length > 1500 || line === lines[lines.length - 1]) continue;\n  lines.push(line);\n}\nconst cleaned = lines.join('\\n').slice(0, MAX_CHARS);\n\nconst source = $('Load enabled sources').item.json;\nconst hash = require('crypto').createHash('sha256').update(cleaned).digest('hex');\nconst status = cleaned.length < 2000 ? 'bad_page' : hash === source.previous_hash ? 'unchanged' : 'changed';\nreturn { json: { ...source, cleaned_text: cleaned, content_hash: hash, status } };\n"
+      },
+      "id": "a-clean",
+      "name": "Clean and hash",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.status }}",
+                    "rightValue": "bad_page",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "bad_page"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.status }}",
+                    "rightValue": "changed",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "changed"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.status }}",
+                    "rightValue": "unchanged",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "unchanged"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a-route",
+      "name": "Page changed?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        960,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// One call per changed page. Every field is required (nullable): without that the model\n// silently omits fields it is unsure about.\nconst PROMPT = \"You extract personal loan products from the text of a lender's web page.\\n\\nRules:\\n- Return only personal loan products the lender offers on this page. Do not invent products.\\n- Use only facts stated in the page text. Never use outside knowledge.\\n- If eligibility is the same for everyone, return one product named \\\"<Lender> Personal Loan\\\". If it differs by employment type (for example salaried vs self-employed), return one product per segment, named \\\"<Lender> Personal Loan (Salaried)\\\" and so on, each with only that segment's own criteria and its allowed_employment limited to that segment. Return separate products otherwise only when the page clearly lists distinct loans.\\n- Use null for anything the page does not state. Never guess.\\n- Interest rates are annual percentages (p.a.). Convert monthly rates to annual. rate_min is the lowest rate quoted (\\\"starting from\\\"), rate_max the highest, null if none is quoted.\\n- min_income is the minimum NET MONTHLY income in INR as a plain number (convert lakh/thousand). Ignore annual-income figures unless converted.\\n- min_credit_score is the minimum CIBIL/credit score if stated, even when described as preferred.\\n- min_age and max_age are in years. A range such as \\\"21 to 60 years\\\" gives min_age 21 and max_age 60; \\\"up to 58 years\\\" gives max_age 58.\\n- allowed_employment lists who may apply, using only: Salaried, Self-Employed, Business. null if not stated.\\n- residual_criteria: one short sentence for any other eligibility conditions not captured above (for example work experience, residence, loan purpose). null if none.\";\nconst SCHEMA = {\"type\": \"OBJECT\", \"properties\": {\"products\": {\"type\": \"ARRAY\", \"items\": {\"type\": \"OBJECT\", \"properties\": {\"product_name\": {\"type\": \"STRING\"}, \"rate_min\": {\"type\": \"NUMBER\", \"nullable\": true}, \"rate_max\": {\"type\": \"NUMBER\", \"nullable\": true}, \"min_income\": {\"type\": \"NUMBER\", \"nullable\": true}, \"min_credit_score\": {\"type\": \"INTEGER\", \"nullable\": true}, \"min_age\": {\"type\": \"INTEGER\", \"nullable\": true}, \"max_age\": {\"type\": \"INTEGER\", \"nullable\": true}, \"allowed_employment\": {\"type\": \"ARRAY\", \"nullable\": true, \"items\": {\"type\": \"STRING\", \"enum\": [\"Salaried\", \"Self-Employed\", \"Business\"]}}, \"residual_criteria\": {\"type\": \"STRING\", \"nullable\": true}}, \"propertyOrdering\": [\"product_name\", \"rate_min\", \"rate_max\", \"min_income\", \"min_credit_score\", \"min_age\", \"max_age\", \"allowed_employment\", \"residual_criteria\"], \"required\": [\"product_name\", \"rate_min\", \"rate_max\", \"min_income\", \"min_credit_score\", \"min_age\", \"max_age\", \"allowed_employment\", \"residual_criteria\"]}}}, \"required\": [\"products\"]};\nreturn { json: { ...$json, request: {\n  systemInstruction: { parts: [{ text: PROMPT }] },\n  contents: [{ parts: [{ text: `Lender: ${$json.lender}\\n\\nPage text:\\n${$json.cleaned_text}` }] }],\n  generationConfig: { temperature: 0, responseMimeType: 'application/json', responseSchema: SCHEMA },\n} } };\n"
+      },
+      "id": "a-build",
+      "name": "Build Gemini request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/{{ $env.GEMINI_MODEL }}:generateContent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-goog-api-key",
+              "value": "={{ $env.GEMINI_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.request }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "a-gemini",
+      "name": "Extract products (Gemini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1440,
+        160
+      ],
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Never trust LLM output: enforce the contract before anything reaches the database.\nconst ctx = $('Build Gemini request').item.json;\nconst EMPLOYMENT = new Set(['Salaried', 'Self-Employed', 'Business']);\nconst inRange = (v, lo, hi) => (typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? v : null);\n\nlet parsed = { products: [] };\ntry {\n  parsed = JSON.parse($json.candidates[0].content.parts[0].text);\n} catch (error) {\n  // fall through with no products; the workflow records an extract failure\n}\n\nconst seen = new Set();\nconst products = [];\nfor (const p of parsed.products ?? []) {\n  const name = String(p.product_name ?? '').trim().slice(0, 120);\n  if (!name || seen.has(name.toLowerCase())) continue;\n  seen.add(name.toLowerCase());\n\n  let rateMin = inRange(p.rate_min, 0.5, 60);\n  let rateMax = inRange(p.rate_max, 0.5, 60);\n  if (rateMin !== null && rateMax !== null && rateMin > rateMax) [rateMin, rateMax] = [rateMax, rateMin];\n\n  let minAge = inRange(p.min_age, 18, 100);\n  let maxAge = inRange(p.max_age, 18, 100);\n  if (minAge !== null && maxAge !== null && minAge > maxAge) minAge = maxAge = null;\n\n  const employment = Array.isArray(p.allowed_employment)\n    ? [...new Set(p.allowed_employment.filter((e) => EMPLOYMENT.has(e)))]\n    : [];\n  const score = inRange(p.min_credit_score, 300, 900);\n\n  products.push({\n    product_name: name,\n    rate_min: rateMin,\n    rate_max: rateMax,\n    min_income: inRange(p.min_income, 1000, 10000000),\n    min_credit_score: score === null ? null : Math.round(score),\n    min_age: minAge === null ? null : Math.round(minAge),\n    max_age: maxAge === null ? null : Math.round(maxAge),\n    allowed_employment: employment.length ? employment : null,\n    residual_criteria: p.residual_criteria ? String(p.residual_criteria).slice(0, 300) : null,\n  });\n}\nreturn { json: { source_id: ctx.source_id, lender: ctx.lender, content_hash: ctx.content_hash, cleaned_text: ctx.cleaned_text, products } };\n"
+      },
+      "id": "a-validate",
+      "name": "Validate products",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "any",
+              "leftValue": "={{ $json.products.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a-any",
+      "name": "Any valid products?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1920,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Upsert extracted products and store the page snapshot in one transaction,\n-- so the hash is only saved when the products were.\nWITH src AS (\n    SELECT source_id, lender, url FROM crawl_sources WHERE source_id = $1\n),\nincoming AS (\n    SELECT * FROM jsonb_to_recordset($2::jsonb) AS x(\n        product_name text, rate_min numeric, rate_max numeric, min_income numeric,\n        min_credit_score smallint, min_age smallint, max_age smallint,\n        allowed_employment text[], residual_criteria text)\n),\nupserted AS (\n    INSERT INTO loan_products (source_id, lender, product_name, rate_min, rate_max, min_income,\n                               min_credit_score, min_age, max_age, allowed_employment,\n                               residual_criteria, source_url)\n    SELECT s.source_id, s.lender, i.product_name, i.rate_min, i.rate_max, i.min_income,\n           i.min_credit_score, i.min_age, i.max_age, i.allowed_employment,\n           i.residual_criteria, s.url\n    FROM incoming i CROSS JOIN src s\n    ON CONFLICT (lender, product_name) DO UPDATE SET\n        source_id = EXCLUDED.source_id,\n        rate_min = EXCLUDED.rate_min,\n        rate_max = EXCLUDED.rate_max,\n        min_income = EXCLUDED.min_income,\n        min_credit_score = EXCLUDED.min_credit_score,\n        min_age = EXCLUDED.min_age,\n        max_age = EXCLUDED.max_age,\n        allowed_employment = EXCLUDED.allowed_employment,\n        residual_criteria = EXCLUDED.residual_criteria,\n        source_url = EXCLUDED.source_url,\n        active = true,\n        last_seen_at = now(),\n        needs_rematch = loan_products.needs_rematch OR (\n            (loan_products.min_income, loan_products.min_credit_score, loan_products.min_age,\n             loan_products.max_age, loan_products.allowed_employment, loan_products.active)\n            IS DISTINCT FROM\n            (EXCLUDED.min_income, EXCLUDED.min_credit_score, EXCLUDED.min_age,\n             EXCLUDED.max_age, EXCLUDED.allowed_employment, true)),\n        updated_at = now()\n    RETURNING 1\n)\nUPDATE crawl_sources\nSET content_hash = $3, cleaned_text = $4, last_fetched_at = now(), last_changed_at = now(), last_status = 'ok'\nWHERE source_id = $1\nRETURNING source_id, (SELECT count(*) FROM upserted) AS products_saved;",
+        "options": {
+          "queryReplacement": "={{ [$json.source_id, JSON.stringify($json.products), $json.content_hash, $json.cleaned_text] }}"
+        }
+      },
+      "id": "a-save",
+      "name": "Save products and snapshot",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2160,
+        60
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "app-postgres",
+          "name": "App Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE crawl_sources SET last_fetched_at = now(), last_status = 'ok' WHERE source_id = $1 RETURNING source_id;",
+        "options": {
+          "queryReplacement": "={{ [$json.source_id] }}"
+        }
+      },
+      "id": "a-touch",
+      "name": "Touch unchanged source",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1200,
+        360
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "app-postgres",
+          "name": "App Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE crawl_sources SET last_fetched_at = now(), last_status = 'fetch_failed' WHERE source_id = $1 RETURNING source_id;",
+        "options": {
+          "queryReplacement": "={{ [$('Load enabled sources').item.json.source_id] }}"
+        }
+      },
+      "id": "a-fail-fetch",
+      "name": "Record fetch failure",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        960,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "app-postgres",
+          "name": "App Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE crawl_sources SET last_fetched_at = now(), last_status = 'extract_failed' WHERE source_id = $1 RETURNING source_id;",
+        "options": {
+          "queryReplacement": "={{ [$('Build Gemini request').item.json.source_id] }}"
+        }
+      },
+      "id": "a-fail-extract",
+      "name": "Record extract failure",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2160,
+        260
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "app-postgres",
+          "name": "App Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Crawled products not seen for 7 days are deactivated, never deleted.\nUPDATE loan_products SET active = false, needs_rematch = true, updated_at = now()\nWHERE active AND source_id IS NOT NULL AND last_seen_at < now() - interval '7 days'\nRETURNING product_id;",
+        "options": {}
+      },
+      "id": "a-stale",
+      "name": "Deactivate stale products",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        240,
+        460
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "app-postgres",
+          "name": "App Postgres"
+        }
+      },
+      "alwaysOutputData": true
+    }
+  ],
+  "connections": {
+    "Daily at 02:00": {
+      "main": [
+        [
+          {
+            "node": "Load enabled sources",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Deactivate stale products",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run manually": {
+      "main": [
+        [
+          {
+            "node": "Load enabled sources",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Deactivate stale products",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load enabled sources": {
+      "main": [
+        [
+          {
+            "node": "Fetch page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch page": {
+      "main": [
+        [
+          {
+            "node": "Clean and hash",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record fetch failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean and hash": {
+      "main": [
+        [
+          {
+            "node": "Page changed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Page changed?": {
+      "main": [
+        [
+          {
+            "node": "Record fetch failure",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Gemini request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Touch unchanged source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Gemini request": {
+      "main": [
+        [
+          {
+            "node": "Extract products (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract products (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Validate products",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record extract failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate products": {
+      "main": [
+        [
+          {
+            "node": "Any valid products?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any valid products?": {
+      "main": [
+        [
+          {
+            "node": "Save products and snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record extract failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

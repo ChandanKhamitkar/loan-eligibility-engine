@@ -46,7 +46,7 @@ bucket ──3 ObjectCreated event──> CSV processor (Lambda in cloud)
 processor ──4 validate + chunked upsert──> Postgres.users (flags changed rows needs_match)
 processor ──5 webhook (upload_id, secret header)──> n8n Workflow B
 B ──SQL funnel──> matches ──6 calls──> Workflow C ──email──> test inbox
-Workflow A (daily cron): 5 sites → clean → hash → LLM extract → loan_products
+Workflow A (daily cron): 3 sites → clean → hash → LLM extract → loan_products
 ```
 
 ## 4. Ingestion
@@ -72,18 +72,22 @@ Workflow A (daily cron): 5 sites → clean → hash → LLM extract → loan_pro
 
 The sample is clean, so keep validation anyway (the grader may use another file). Also keep a ~20-row demo CSV for the video.
 
-## 5. Workflow A: product discovery (daily cron)
+## 5. Workflow A: product discovery (daily 02:00 + manual)
 
-1. Read the site list from config (**5 sites**; list-driven so adding one is a config change). Get 2-3 working first.
-2. HTTP GET each page (polite: robots.txt, User-Agent, one fetch per day).
-3. Clean: strip script/style/nav/footer/svg, keep table content as text, collapse whitespace.
-4. Hash the **cleaned** text. Unchanged → skip.
-5. Changed → send to Gemini with a fixed JSON schema (array of products, nullable fields); save hash + cleaned text on the `crawl_sources` row (latest snapshot only).
-6. Validate in a Code node, then upsert `loan_products` on (lender, product_name). New or criteria-changed products set `needs_rematch`. Unseen for N days → mark inactive, never delete. An empty crawl never wipes the table.
+Sources (rows in `crawl_sources`, seeded by migration 0003; list-driven, so adding a site is one `INSERT`): Tata Capital, IDFC FIRST Bank, ICICI Bank personal loan pages. All three serve their rates and eligibility in the raw HTML.
 
-Columns: see [schema.md](schema.md).
+1. Load enabled sources; HTTP GET each page (browser User-Agent, 30s timeout, 3 tries).
+2. Clean: strip script/style/nav/footer/header/svg/iframe and embedded JSON blobs, keep table cells as text, dedupe lines, cap at 80k chars (91-98% smaller than the raw HTML, about 7-14k tokens).
+3. SHA-256 of the **cleaned** text (Code node, `NODE_FUNCTION_ALLOW_BUILTIN=crypto`) vs the stored hash. Unchanged → only `last_fetched_at` is touched, no LLM call. Page under 2,000 chars → treated as blocked (`fetch_failed`).
+4. Changed → Gemini (`GEMINI_MODEL`, default `gemini-3.8-flash`; `gemini-2.5-flash` is closed to new keys), temperature 0, JSON response schema. The prompt lives in the `Build Gemini request` node. Rules that matter:
+   - **Every schema field is required (nullable).** With optional fields the model silently dropped values it was unsure about (IDFC's max age).
+   - Use only the page text; null when unstated.
+   - If eligibility differs by employment type, return one product per segment (ICICI: Salaried 18-58 / ₹30k, Self-Employed 23-65).
+5. `Validate products` Code node enforces ranges and enums (rate 0.5-60, score 300-900, age 18-100, employment ∈ {Salaried, Self-Employed, Business}), dedupes names; empty result → `extract_failed`.
+6. One SQL statement upserts `loan_products` on (lender, product_name) and saves the hash + cleaned text, so the hash is stored **only if** the products were. New or criteria-changed products set `needs_rematch`.
+7. Parallel branch: crawled products unseen for 7 days → `active=false` (never deleted). A failed crawl never wipes products. Gemini 5xx/429 are retried (4 tries, 5s apart).
 
-A small seed JSON of products exists only as a demo safety net.
+Columns: see [schema.md](schema.md). Seed products (`db/seed/products.json`, lenders named "Demo ...", `source_id` null) are only for testing matching without the crawler.
 
 ## 6. Workflow B: matching (webhook)
 
@@ -128,7 +132,6 @@ A small seed JSON of products exists only as a demo safety net.
 
 ## 9. Open items to verify
 
-- Which of the 5 candidate sites return rates and eligibility in raw HTML.
-- Whether MinIO's current image/licence is usable; otherwise use the simple local upload service.
+- MinIO: upstream `minio/minio` is no longer on Docker Hub; the compose file uses the community build `pgsty/minio`. Revisit if it stops being maintained.
 - Whether n8n's SES node works against the chosen setup (else real SES sandbox for that step only).
 - AWS free-tier/credit status at signup, for phase 2.

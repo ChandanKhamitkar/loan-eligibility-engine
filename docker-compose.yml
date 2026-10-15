@@ -86,6 +86,9 @@ services:
       GMAIL_USER: ${GMAIL_USER}
       NOTIFY_LIMIT: ${NOTIFY_LIMIT:-2}
       NOTIFY_RECIPIENTS: ${NOTIFY_RECIPIENTS}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+      NODE_FUNCTION_ALLOW_BUILTIN: crypto
     ports:
       - "5678:5678"
     volumes:
