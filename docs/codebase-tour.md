@@ -48,7 +48,7 @@ All in [src/common/](../src/common/). Read them in 5 minutes:
 [ui/index.html](../ui/index.html) and [ui/app.js](../ui/app.js). In `app.js` follow three functions in order:
 1. `requestUpload` → `POST /uploads` (asks for a permit)
 2. `sendToStorage` → posts the file **directly to storage** (never through our server)
-3. `poll` → `GET /uploads/{id}` every 1.5 s, drawing the status steps until `notified`
+3. `poll` → `GET /uploads/{id}`, drawing the status steps until `notified`. It starts at 1.5 s, slows to 5 s, and gives up after 25 tries (about 1m45s) and shows a **Refresh status** button instead of polling forever
 
 Connects to: the two handlers in stops 5 and 8.
 
@@ -63,7 +63,7 @@ Key idea: **the handlers are the real code; Flask and API Gateway are just diffe
 
 [src/ingestion/handlers/get_upload_url.py](../src/ingestion/handlers/get_upload_url.py):
 1. checks the filename ends in `.csv`
-2. `repository.create_upload` inserts an `uploads` row (status `uploaded`, key `uploads/<id>.csv`)
+2. `uploads.create` ([repositories/uploads.py](../src/ingestion/repositories/uploads.py)) inserts an `uploads` row (status `uploaded`, key `uploads/<id>.csv`)
 3. `generate_presigned_post` returns a signed form that allows exactly one upload, up to `MAX_UPLOAD_BYTES`, for 10 minutes
 
 Why this design: the file never touches our API, so there are no request-size or timeout limits.
@@ -76,16 +76,16 @@ Why this design: the file never touches our API, so there are no request-size or
 
 Start in [src/ingestion/service.py](../src/ingestion/service.py), `process_upload`:
 
-1. `repository.claim_upload`: flips `uploaded → processing` only if it was `uploaded`. This stops duplicate event deliveries from processing a file twice.
+1. `uploads.claim`: flips `uploaded → processing` only if it was `uploaded`. This stops duplicate event deliveries from processing a file twice.
 2. `_load_users` opens the file as a stream and loops over `parser.parse_chunks`.
-3. Per chunk of 2,000 rows, in one transaction: `repository.upsert_users` and `store_issues`.
+3. Per chunk of 2,000 rows, in one transaction: `users.upsert` and `upload_errors.store`.
 4. On a bad header → `fail_upload`. On any other crash → `fail_upload` with the message.
 5. `finish_upload` → status `processed`, then `notify.trigger_matching` calls n8n.
 
 Now open the helpers it uses:
 - [parser.py](../src/ingestion/parser.py): reads rows, calls the validator, builds chunks, collapses duplicate `user_id`s inside a chunk (last wins). A bad row becomes a `RowIssue` with its line number instead of stopping everything.
 - [validators.py](../src/ingestion/validators.py): `validate_row` and its small `_parse_*` functions: UUID format, email, income > 0, score 300-900, age 18-100, employment name normalised (`self employed` → `Self-Employed`).
-- [repository.py](../src/ingestion/repository.py): read `_UPSERT_USERS` slowly. It inserts a whole chunk in one statement; on a clash (`ON CONFLICT (user_id)`) it updates the row; it sets `needs_match = true` **only if** income, score, employment or age actually changed; a row identical in every column is not rewritten at all.
+- [repositories/](../src/ingestion/repositories/): one small file per table. `uploads.py` (the status lifecycle), `users.py`, `upload_errors.py`. Read `_UPSERT` in `users.py` slowly. It inserts a whole chunk in one statement; on a clash (`ON CONFLICT (user_id)`) it updates the row; it sets `needs_match = true` **only if** income, score, employment or age actually changed; a row identical in every column is not rewritten at all.
 - [notify.py](../src/ingestion/notify.py): `trigger_matching` POSTs `{upload_id}` to n8n with the secret header, retrying 3 times.
 
 Connects to: Workflow B's webhook.

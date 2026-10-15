@@ -262,7 +262,6 @@ resources:
                     - { Name: prefix, Value: uploads/ }
                     - { Name: suffix, Value: .csv }
 
-    # Uses the literal bucket ARN rather than Ref, which would make the bucket and permission circular
     UploadBucketInvokePermission:
       Type: AWS::Lambda::Permission
       Properties:
@@ -272,7 +271,7 @@ resources:
         SourceAccount: { Ref: "AWS::AccountId" }
         SourceArn: arn:aws:s3:::${self:custom.uploadBucket}
 
-    # ---- n8n host: reads its bundle (compose file, workflows, .env) from the bucket on first boot
+    # ---- n8n host
     N8nInstanceRole:
       Type: AWS::IAM::Role
       Properties:

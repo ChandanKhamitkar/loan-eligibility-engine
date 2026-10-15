@@ -65,3 +65,13 @@ button:disabled { opacity: .6; cursor: progress; }
 
 #message { margin-top: 1rem; font-size: .875rem; color: var(--muted); }
 #message.error { color: var(--error); }
+
+.refresh {
+  width: auto;
+  margin-top: .75rem;
+  padding: .5rem 1rem;
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--border);
+}
+.refresh:hover { border-color: var(--accent); }

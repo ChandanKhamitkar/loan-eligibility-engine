@@ -33,7 +33,10 @@ loan-eligibility-engine/
 │   │   ├── service.py         #   orchestrates one upload end to end
 │   │   ├── parser.py          #   stream + chunk CSV
 │   │   ├── validators.py      #   row validation + normalization (pure)
-│   │   ├── repository.py      #   upsert users, update uploads
+│   │   ├── repositories/      #   one module per table
+│   │   │   ├── uploads.py     #     create, claim, finish, fail, get
+│   │   │   ├── users.py       #     chunked upsert
+│   │   │   └── upload_errors.py #   rejected rows
 │   │   └── notify.py          #   call n8n webhook
 │   └── local/
 │       └── app.py             # Flask adapter: routes call the same handlers
@@ -70,7 +73,7 @@ loan-eligibility-engine/
 | I want to... | Look in |
 |---|---|
 | Change how a CSV row is validated | `src/ingestion/validators.py` |
-| Change how users are saved | `src/ingestion/repository.py` |
+| Change how users are saved | `src/ingestion/repositories/users.py` |
 | Add a Lambda | `src/<domain>/handlers/` + entry in `serverless.yml` |
 | Change matching rules | `n8n/workflows/b_user_matching.json` (SQL copy in `db/queries/`) |
 | Change what the crawler extracts | `Build Gemini request` node in workflow A (prompt + schema) |

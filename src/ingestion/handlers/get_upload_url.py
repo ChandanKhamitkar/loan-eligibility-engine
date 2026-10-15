@@ -5,7 +5,7 @@ from src.common.config import get_settings
 from src.common.db import connect
 from src.common.http import json_response
 from src.common.storage import presign_client
-from src.ingestion import repository
+from src.ingestion.repositories import uploads
 
 _URL_TTL_SECONDS = 600
 
@@ -20,7 +20,7 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         return json_response(400, {"error": "Only .csv files are accepted"})
 
     with connect(settings) as conn:
-        upload_id, object_key = repository.create_upload(conn, filename[:255])
+        upload_id, object_key = uploads.create(conn, filename[:255])
 
     post = presign_client(settings).generate_presigned_post(
         Bucket=settings.s3_bucket,

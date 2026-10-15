@@ -1,5 +1,9 @@
 const STEPS = ["uploaded", "processing", "processed", "matching", "matched", "notified"];
-const POLL_MS = 1500;
+// Poll gently, then give up and offer a manual refresh: about 1m45s in total
+const POLL_START_MS = 1500;
+const POLL_MAX_MS = 5000;
+const POLL_GROWTH = 1.15;
+const MAX_POLLS = 25;
 
 const form = document.getElementById("upload-form");
 const fileInput = document.getElementById("file");
@@ -8,6 +12,9 @@ const submit = document.getElementById("submit");
 const statusBox = document.getElementById("status");
 const counts = document.getElementById("counts");
 const message = document.getElementById("message");
+const refresh = document.getElementById("refresh");
+
+let lastUploadId = null;
 
 fileInput.addEventListener("change", () => {
   fileLabel.textContent = fileInput.files[0]?.name ?? "Choose a CSV file";
@@ -20,16 +27,30 @@ form.addEventListener("submit", async (event) => {
 
   submit.disabled = true;
   statusBox.hidden = false;
+  refresh.hidden = true;
+  lastUploadId = null;
   setMessage("Requesting upload link…");
   try {
     const { upload_id, url, fields } = await requestUpload(file.name);
+    lastUploadId = upload_id;
     setMessage("Uploading…");
     await sendToStorage(url, fields, file);
     await poll(upload_id);
   } catch (error) {
     setMessage(error.message, true);
+    refresh.hidden = lastUploadId === null;
   } finally {
     submit.disabled = false;
+  }
+});
+
+refresh.addEventListener("click", async () => {
+  refresh.hidden = true;
+  try {
+    await poll(lastUploadId);
+  } catch (error) {
+    setMessage(error.message, true);
+    refresh.hidden = false;
   }
 });
 
@@ -53,14 +74,23 @@ async function sendToStorage(url, fields, file) {
 }
 
 async function poll(uploadId) {
-  for (;;) {
-    const response = await fetch(`/uploads/${uploadId}`);
-    const upload = await response.json();
+  let delay = POLL_START_MS;
+  for (let attempt = 1; attempt <= MAX_POLLS; attempt++) {
+    const upload = await fetchStatus(uploadId);
     render(upload);
     if (upload.status === "failed") throw new Error(upload.error ?? "Processing failed");
     if (upload.status === "notified") return setMessage("Done. Check the test inbox.");
-    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    delay = Math.min(delay * POLL_GROWTH, POLL_MAX_MS);
   }
+  refresh.hidden = false;
+  setMessage("Still working. Press refresh to check again.");
+}
+
+async function fetchStatus(uploadId) {
+  const response = await fetch(`/uploads/${uploadId}`);
+  if (!response.ok) throw new Error("Could not read the upload status");
+  return response.json();
 }
 
 function render(upload) {

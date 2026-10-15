@@ -136,7 +136,7 @@ Notes from a real deployment: SES starts in the sandbox, which only sends to ver
 serverless.yml          AWS stack (VPC, RDS, S3, Lambdas, API, n8n host)
 docker-compose.yml      Local stack
 n8n/workflows/          The three workflow exports (+ SES variant of C)
-src/ingestion/          Upload, CSV parsing, validation, repository
+src/ingestion/          Upload, CSV parsing, validation, per-table repositories
 src/common, admin, web  Shared config/db/storage, migrations Lambda, UI Lambda
 db/migrations/          Plain SQL schema migrations
 db/queries/             Reference copies of the SQL used inside n8n

@@ -30,7 +30,6 @@ services:
       retries: 10
 
   minio:
-    # Upstream minio/minio is no longer published on Docker Hub; pgsty/minio is a drop-in community build.
     image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
     command: server /data --console-address ":9001"
     environment:
