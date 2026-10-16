@@ -4,6 +4,16 @@ Upload a CSV of users. The system crawls loan products from lender websites, mat
 
 Ingestion runs on Lambda and S3, data lives in PostgreSQL, and all business logic runs in self-hosted n8n workflows.
 
+## Deliverables
+
+| Item | Where |
+|---|---|
+| Demo video | [Watch the demo](https://shorturl.at/Brhjw) |
+| AWS infrastructure | [serverless.yml](serverless.yml) |
+| n8n launch | [docker-compose.yml](docker-compose.yml) (local) · [docker-compose.aws.yml](docker-compose.aws.yml) (n8n on EC2) |
+| n8n workflows | [A · Product discovery](n8n/workflows/a_product_discovery.json) · [B · User matching](n8n/workflows/b_user_matching.json) · [C · Notification](n8n/workflows/c_notification.json) · [C with AWS SES](n8n/workflows/variants/c_notification_ses.json) |
+| Documentation | [Architecture](#architecture) · [Setup and deployment](#setup-and-deployment) · [Design decisions](#design-decisions) |
+
 ## Architecture
 
 ![Architecture](docs/architecture.png)
