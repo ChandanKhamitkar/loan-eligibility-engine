@@ -9,7 +9,7 @@ Loan Eligibility Engine, a take-home for ClickPe. A pipeline that ingests a user
 | [schema.md](schema.md) | Tables, columns, constraints, indexes, flag semantics, key SQL patterns |
 | [directory-structure.md](directory-structure.md) | Repo layout and where things go |
 | [coding-standards.md](coding-standards.md) | Python, SQL, n8n and config conventions |
-| The Loan Eligibility Engine (Engineering Intern)-clickpe.docx | Original assessment brief |
-| [../data/users.csv](../data/users.csv) | Sample dataset (10,000 users) |
+| Assessment brief | [Docx link](https://docs.google.com/document/d/1gmnu-jAi7ngxQK-iL3SkrdIcXPS72ypEgMHfVj8ShCM/edit?tab=t.0) |
+| Sample dataset | From the assessment, or generate one with `scripts/generate_sample_users.py` |
 
 **Using as context:** pass `decisions.md` plus whichever of the others the task touches. The brief is only for re-checking requirements.

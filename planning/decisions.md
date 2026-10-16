@@ -1,6 +1,6 @@
 # Loan Eligibility Engine: Decisions
 
-Source brief: `The Loan Eligibility Engine (Engineering Intern)-clickpe.docx` (same folder).
+Source: the assessment brief [Docx link](https://docs.google.com/document/d/1gmnu-jAi7ngxQK-iL3SkrdIcXPS72ypEgMHfVj8ShCM/edit?tab=t.0)
 
 ## 1. Assessment essentials
 
@@ -57,7 +57,7 @@ Workflow A (daily cron): 3 sites → clean → hash → LLM extract → loan_pro
 - **Rejected rows:** counted and stored per upload; they don't fail the batch.
 - **`uploads` table:** `upload_id`, status (`processing → done → matched → notified`), `rows_ok`, `rows_rejected`.
 
-### Data facts (`data/users.csv`)
+### Data facts (the assessment's sample `users.csv`)
 
 | Fact | Value |
 |---|---|

@@ -50,7 +50,7 @@ docker compose up -d --build    # Postgres, MinIO, API, n8n; migrations run auto
 1. Open http://localhost:5678 and create the n8n owner account.
 2. `python scripts/n8n_setup.py` creates the credentials and imports and publishes the three workflows.
 3. In n8n, open **A - Loan Product Discovery** and click **Execute workflow**.
-4. Open http://localhost:8000 and upload `data/users.csv` (10,000 rows) or `data/demo_users.csv`.
+4. Open http://localhost:8000 and upload a CSV: the assessment's sample, or one you generate with `python scripts/generate_sample_users.py` (10,000 synthetic users in `data/users.csv`). For a small file with edge cases, add `--rows 20 --edge-cases --out data/demo_users.csv`.
 
 ### AWS
 
@@ -109,7 +109,7 @@ Webhook secret, Gemini key and demo limits are container environment variables, 
 | 1. Hard rules | One set-based SQL join: income, score, age, employment (null means no constraint) |
 | 2. Rank and cap | `fit_score` (lower rate is better); top 5 per user when emailing |
 
-Measured on this repository's data (`match_runs` table):
+Measured on the assessment's 10,000-user sample (`match_runs` table):
 
 | Run | Naive pairs | Evaluated | Eligible | Skipped |
 |---|---|---|---|---|

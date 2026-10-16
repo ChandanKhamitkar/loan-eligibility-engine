@@ -58,12 +58,12 @@ loan-eligibility-engine/
 │   ├── queries/               # Reference copies of SQL used inside n8n (match_funnel.sql)
 │   └── seed/                  # products.json: demo products for testing without the crawler
 │
-├── scripts/                   # migrate.py, seed_products.py, n8n_setup.py, aws_deploy.py, aws_teardown.py
+├── scripts/                   # migrate.py, seed_products.py, n8n_setup.py, aws_deploy.py, aws_teardown.py, generate_sample_users.py
 ├── tests/
 │   ├── unit/                  # validators, parser, chunk dedupe
 │   └── integration/           # upsert flags, funnel SQL on fixture data
 │
-├── data/                      # users.csv (10k), demo_users.csv (~20 rows)
+├── data/                      # gitignored: sample CSVs (the assessment's, or generated)
 ├── docs/                      # aws-deployment.md; later the architecture diagram image and screenshots
 └── planning/                  # Pre-build planning (this folder)
 ```

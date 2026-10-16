@@ -9,3 +9,6 @@ node_modules/
 .env.aws
 *.tgz
 demo/
+data/
+planning/*.docx
+planning/Inital-context-prompt.md

@@ -28,7 +28,7 @@ Lambda, RDS and the n8n host share one VPC. RDS has no public access and accepts
 The script deploys the stack, uploads the n8n bundle (compose file, workflows, generated `.env`) to S3, then runs the database migrations through a Lambda inside the VPC. Expect 10-20 minutes the first time (RDS creation, Docker build of the Lambda dependencies).
 
 4. The EC2 host installs Docker, pulls the bundle, starts n8n and imports the credentials and workflows by itself. Open the printed n8n URL once it answers, create the n8n owner account, and check that workflows A, B and C show as published.
-5. Open the printed app URL, upload `data/demo_users.csv` (or `users.csv`), and watch the status steps. Run workflow A once from the n8n editor first so products exist.
+5. Open the printed app URL, upload a CSV (the assessment sample, or one from `scripts/generate_sample_users.py`), and watch the status steps. Run workflow A once from the n8n editor first so products exist.
 
 ## Updating a running deployment
 
