@@ -4,6 +4,8 @@ Upload a CSV of users. The system crawls loan products from lender websites, mat
 
 Ingestion runs on Lambda and S3, data lives in PostgreSQL, and all business logic runs in self-hosted n8n workflows.
 
+---
+
 ## Deliverables
 
 | Item | Where |
@@ -13,6 +15,8 @@ Ingestion runs on Lambda and S3, data lives in PostgreSQL, and all business logi
 | n8n launch | • [docker-compose.aws.yml](docker-compose.aws.yml) (n8n on EC2) |
 | n8n workflows | • [A · Product discovery](n8n/workflows/a_product_discovery.json)<br>• [B · User matching](n8n/workflows/b_user_matching.json)<br>• [C · Notification (AWS SES)](n8n/workflows/variants/c_notification_ses.json) |
 | Documentation | [Architecture](#architecture) · [Setup and deployment](#setup-and-deployment) · [Design decisions](#design-decisions) |
+
+---
 
 ## Architecture
 
@@ -29,6 +33,8 @@ Ingestion runs on Lambda and S3, data lives in PostgreSQL, and all business logi
 **Workflow A** runs separately every day: it crawls lender pages, extracts products with Gemini and stores them.
 
 Deployed with the Serverless Framework. RDS is private; Lambda, RDS and n8n (Docker on EC2) share one VPC. Locally the same code runs on Docker Compose: MinIO replaces S3 and a small Flask app replaces API Gateway.
+
+---
 
 ## Setup and deployment
 
@@ -70,6 +76,8 @@ The setup script creates these from `.env` / `.env.aws`. To create them by hand:
 | AWS SES | AWS | region, access key ID, secret access key (AWS) |
 
 Webhook secret, Gemini key and demo limits are container environment variables, read in nodes as `$env.*`. No secrets are stored in the workflow JSON.
+
+---
 
 ## Design decisions
 
@@ -124,6 +132,8 @@ Limit: non-numeric criteria such as "2 years of experience" are stored as `resid
 | Demo email guard | Recipients come only from `NOTIFY_RECIPIENTS`, never the CSV; max `NOTIFY_LIMIT` (2) per run |
 | No NAT gateway | Lambda reaches S3 through a free gateway endpoint; saves about $32/month |
 
+---
+
 ## Repository layout
 
 ```
@@ -136,6 +146,8 @@ scripts/                n8n setup, AWS deploy and teardown
 tests/                  Unit tests
 docs/                   Architecture source, AWS guide, codebase tour
 ```
+
+---
 
 ## Tests
 
