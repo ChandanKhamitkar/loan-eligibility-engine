@@ -8,10 +8,10 @@ Ingestion runs on Lambda and S3, data lives in PostgreSQL, and all business logi
 
 | Item | Where |
 |---|---|
-| Demo video | [Watch the demo](https://shorturl.at/Brhjw) |
+| Demo video | <a href="https://shorturl.at/Brhjw"><img src="docs/demo-thumbnail.png" alt="Watch the demo video" width="420"></a> |
 | AWS infrastructure | [serverless.yml](serverless.yml) |
-| n8n launch | [docker-compose.yml](docker-compose.yml) (local) · [docker-compose.aws.yml](docker-compose.aws.yml) (n8n on EC2) |
-| n8n workflows | [A · Product discovery](n8n/workflows/a_product_discovery.json) · [B · User matching](n8n/workflows/b_user_matching.json) · [C · Notification](n8n/workflows/c_notification.json) · [C with AWS SES](n8n/workflows/variants/c_notification_ses.json) |
+| n8n launch | • [docker-compose.aws.yml](docker-compose.aws.yml) (n8n on EC2) |
+| n8n workflows | • [A · Product discovery](n8n/workflows/a_product_discovery.json)<br>• [B · User matching](n8n/workflows/b_user_matching.json)<br>• [C · Notification (AWS SES)](n8n/workflows/variants/c_notification_ses.json) |
 | Documentation | [Architecture](#architecture) · [Setup and deployment](#setup-and-deployment) · [Design decisions](#design-decisions) |
 
 ## Architecture
