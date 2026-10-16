@@ -10,7 +10,7 @@ Ingestion runs on Lambda and S3, data lives in PostgreSQL, and all business logi
 
 | Item | Where |
 |---|---|
-| Demo video | <a href="https://shorturl.at/Brhjw"><img src="docs/demo-thumbnail.png" alt="Watch the demo video" width="420"></a> |
+| Demo video | <a href="https://shorturl.at/Brhjw"><img src="docs/demo-thumbnail.png" alt="Watch the demo video" width="420"></a><br>▶ <b>Click the image to watch the demo</b> (live, end to end) |
 | AWS infrastructure | [serverless.yml](serverless.yml) |
 | n8n launch | • [docker-compose.aws.yml](docker-compose.aws.yml) (n8n on EC2) |
 | n8n workflows | • [A · Product discovery](n8n/workflows/a_product_discovery.json)<br>• [B · User matching](n8n/workflows/b_user_matching.json)<br>• [C · Notification (AWS SES)](n8n/workflows/variants/c_notification_ses.json) |
